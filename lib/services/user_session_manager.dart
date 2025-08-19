@@ -35,6 +35,11 @@ class UserSessionManager {
     _previousUserId = _currentUserId;
     _currentUserId = newUserId;
 
+    // Persist current user id for background isolate fallback
+    try {
+      await DatabaseService().setSyncMetadata('current_user_id', newUserId);
+    } catch (_) {}
+
     // Initialize services for new user
     await _initializeUserServices(newUserId);
     
@@ -162,6 +167,11 @@ class UserSessionManager {
       // 5. Clear user session
       _previousUserId = _currentUserId;
       _currentUserId = null;
+
+      // Clear persisted user id
+      try {
+        await DatabaseService().setSyncMetadata('current_user_id', '');
+      } catch (_) {}
 
       print('✅ User logout completed');
     } catch (e) {

@@ -209,8 +209,8 @@ class PersistentTrackerService {
           print('🗓️ New day detected - reset daily counter');
         }
 
-        // Sync data to cloud periodically
-        await _syncToCloud();
+        // No cloud sync here: background service is write-only.
+        // Cloud sync will be handled by ImprovedSyncService in foreground.
 
       } catch (e) {
         print('❌ Periodic task error: $e');
@@ -255,20 +255,24 @@ class PersistentTrackerService {
         case ScreenStateEvent.SCREEN_OFF:
           if (serviceData.screenOnTime != null) {
             final screenOffTime = DateTime.now();
-            final sessionMinutes = screenOffTime.difference(serviceData.screenOnTime!).inMinutes;
+            final sessionSeconds = screenOffTime.difference(serviceData.screenOnTime!).inSeconds;
+            final sessionMinutes = (sessionSeconds / 60).ceil(); // count short sessions as 1 minute
             
-            if (sessionMinutes > 0) {
+            if (sessionSeconds > 0) {
               // Save session
               await _saveSession(serviceData.screenOnTime!, screenOffTime, sessionMinutes);
               serviceData.todayScreenTime += sessionMinutes;
               
-              print('📱 Screen OFF - Session: ${sessionMinutes}m (Total: ${serviceData.todayScreenTime}m)');
+              print('📱 Screen OFF - Session: ${sessionMinutes}m (${sessionSeconds}s) (Total: ${serviceData.todayScreenTime}m)');
               
-              // Update notification
+              // Update notification to reflect new daily total immediately
               if (service is AndroidServiceInstance) {
+                final hours = serviceData.todayScreenTime ~/ 60;
+                final minutes = serviceData.todayScreenTime % 60;
+                final totalStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
                 service.setForegroundNotificationInfo(
                   title: 'TRIminder Tracking',
-                  content: 'Session ended: ${sessionMinutes}m',
+                  content: 'Today: $totalStr (last: ${sessionMinutes}m)',
                 );
               }
             }
@@ -278,8 +282,13 @@ class PersistentTrackerService {
           break;
           
         case ScreenStateEvent.SCREEN_UNLOCKED:
-          // Handle screen unlock if needed
-          print('📱 Screen unlocked');
+          // Some devices only emit UNLOCK; start a session if none active
+          if (serviceData.screenOnTime == null) {
+            serviceData.screenOnTime = DateTime.now();
+            print('📱 Screen unlocked → starting session at ${serviceData.screenOnTime}');
+          } else {
+            print('📱 Screen unlocked');
+          }
           break;
       }
     } catch (e) {
@@ -290,19 +299,32 @@ class PersistentTrackerService {
   /// Save individual screen session
   static Future<void> _saveSession(DateTime start, DateTime end, int minutes) async {
     try {
-      // Get current user ID from Supabase service
+      // Get current user ID from Supabase if available; otherwise fallback to persisted id
       String? userId;
+      // Supabase may not be initialized in the background isolate – do not return here
       try {
-        final supabaseService = SupabaseService();
-        userId = supabaseService.currentUserId;
-        
-        // If no user ID, skip saving this session
-        if (userId == null || userId.isEmpty) {
-          print('⚠️ No authenticated user found, skipping session save');
-          return;
-        }
+        userId = SupabaseService().currentUserId;
       } catch (e) {
-        print('❌ Could not get user ID, skipping session save: $e');
+        print('ℹ️ Supabase not available in background isolate: $e');
+      }
+
+      // Fallback: use persisted last logged-in user id
+      if (userId == null || userId.isEmpty) {
+        try {
+          final db = DatabaseService();
+          final persisted = await db.getSyncMetadata('current_user_id');
+          if (persisted != null && persisted.isNotEmpty) {
+            userId = persisted;
+            print('ℹ️ Using persisted user id for background save: $userId');
+          }
+        } catch (e) {
+          print('❌ Failed to read persisted user id: $e');
+        }
+      }
+
+      // If still no user ID, skip saving this session
+      if (userId == null || userId.isEmpty) {
+        print('⚠️ No authenticated user found, skipping session save');
         return;
       }
 
@@ -366,21 +388,7 @@ class PersistentTrackerService {
     return 0;                           // Excessive
   }
 
-  /// Sync data to cloud (when possible)
-  static Future<void> _syncToCloud() async {
-    try {
-      // This will attempt to sync unsynced data to Supabase
-      // May fail if no internet - that's OK, will retry later
-      print('☁️ Attempting cloud sync...');
-      
-      final syncService = ImprovedSyncService();
-      await syncService.performSync();
-      
-    } catch (e) {
-      print('❌ Cloud sync failed: $e');
-      // Don't rethrow - background sync should not fail the service
-    }
-  }
+  // Removed cloud sync from background service
 
   /// iOS background handler
   @pragma('vm:entry-point')

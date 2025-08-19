@@ -230,20 +230,35 @@ class ImprovedSyncService extends ChangeNotifier {
   Future<bool> _performIncrementalSync() async {
     try {
       final db = DatabaseService();
+      final supabaseService = SupabaseService();
+      final userId = supabaseService.currentUserId!;
+
+      // 1) Pull cloud changes since last cloud sync and merge
+      final now = DateTime.now();
+      final since = _lastCloudSync ?? now.subtract(_initialSyncRange);
+      print('📥 Incremental: fetching cloud logs since ${since.toIso8601String()}');
+      final cloudLogs = await supabaseService.getScreenTimeLogsSince(userId, since);
+      if (cloudLogs.isNotEmpty) {
+        print('   - Received ${cloudLogs.length} cloud entries');
+        final unsyncedLocal = await db.getUnsyncedScreenTimeLogs();
+        await _mergeIncrementalData(cloudLogs, unsyncedLocal, db);
+      } else {
+        print('   - No new cloud entries');
+      }
+      _lastCloudSync = now;
+
+      // 2) Push local unsynced entries
       final unsyncedLogs = await db.getUnsyncedScreenTimeLogs();
-      
       if (unsyncedLogs.isEmpty) {
-        print('📊 No unsynced data found - sync complete');
+        print('📊 No unsynced local data - incremental sync complete');
         return true;
       }
 
       print('📤 Uploading ${unsyncedLogs.length} local entries...');
       final success = await _uploadLocalLogs(unsyncedLogs, db);
-      
       if (success) {
         print('✅ Incremental sync: uploaded ${unsyncedLogs.length} entries');
       }
-      
       return success;
     } catch (e) {
       print('❌ Error in incremental sync: $e');
