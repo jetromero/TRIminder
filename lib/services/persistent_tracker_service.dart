@@ -5,10 +5,21 @@ import 'package:screen_state/screen_state.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/user_models.dart';
 import '../services/database_service.dart';
+import '../services/supabase_service.dart';
+import '../services/improved_sync_service.dart';
+
+
+/// Data wrapper class for service variables (enables reference passing)
+class _ServiceData {
+  DateTime? screenOnTime;
+  int todayScreenTime = 0;
+  DateTime lastSaveDate = DateTime.now();
+}
 
 /// Persistent background service that runs automatically on device boot
 /// Tracks screen time 24/7 without user intervention
 /// Survives app closure, phone restarts, and system termination
+@pragma('vm:entry-point')
 class PersistentTrackerService {
 
   static bool _isInitialized = false;
@@ -127,13 +138,13 @@ class PersistentTrackerService {
 
   /// Background service entry point (runs in isolate)
   @pragma('vm:entry-point')
+  @pragma('dart2js:tryInline')
   static void _onStart(ServiceInstance service) async {
     print('🎯 Background service started in isolate');
 
-    // Initialize service data
-    DateTime? screenOnTime;
-    int todayScreenTime = 0;
-    DateTime lastSaveDate = DateTime.now();
+    // Initialize service data with wrapper class for reference passing
+    final serviceData = _ServiceData();
+    serviceData.lastSaveDate = DateTime.now();
 
     // Update notification
     if (service is AndroidServiceInstance) {
@@ -149,8 +160,8 @@ class PersistentTrackerService {
 
     try {
       screen = Screen();
-      screenSubscription = screen.screenStateStream?.listen(
-        (event) => _handleScreenEvent(service, event, screenOnTime, todayScreenTime),
+      screenSubscription = screen.screenStateStream.listen(
+        (event) => _handleScreenEvent(service, event, serviceData),
         onError: (error) {
           print('❌ Screen monitoring error: $error');
           if (service is AndroidServiceInstance) {
@@ -178,8 +189,8 @@ class PersistentTrackerService {
     Timer.periodic(const Duration(minutes: 5), (timer) async {
       try {
         // Update notification with current stats
-        final hours = todayScreenTime ~/ 60;
-        final minutes = todayScreenTime % 60;
+        final hours = serviceData.todayScreenTime ~/ 60;
+        final minutes = serviceData.todayScreenTime % 60;
         final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
         
         if (service is AndroidServiceInstance) {
@@ -191,10 +202,10 @@ class PersistentTrackerService {
 
         // Check if new day - reset daily counter
         final now = DateTime.now();
-        if (now.day != lastSaveDate.day) {
-          await _saveDailyData(todayScreenTime);
-          todayScreenTime = 0;
-          lastSaveDate = now;
+        if (now.day != serviceData.lastSaveDate.day) {
+          await _saveDailyData(serviceData.todayScreenTime);
+          serviceData.todayScreenTime = 0;
+          serviceData.lastSaveDate = now;
           print('🗓️ New day detected - reset daily counter');
         }
 
@@ -210,17 +221,16 @@ class PersistentTrackerService {
     service.on('stop').listen((event) async {
       print('🛑 Received stop command');
       
-              // Save any ongoing session
-        final currentTime = DateTime.now();
-        final currentScreenOnTime = screenOnTime;
-        if (currentScreenOnTime != null) {
-          final sessionMinutes = currentTime.difference(currentScreenOnTime).inMinutes;
-          todayScreenTime += sessionMinutes;
-          await _saveSession(currentScreenOnTime, currentTime, sessionMinutes);
-        }
+      // Save any ongoing session
+      final currentTime = DateTime.now();
+      if (serviceData.screenOnTime != null) {
+        final sessionMinutes = currentTime.difference(serviceData.screenOnTime!).inMinutes;
+        serviceData.todayScreenTime += sessionMinutes;
+        await _saveSession(serviceData.screenOnTime!, currentTime, sessionMinutes);
+      }
 
       // Save daily data
-      await _saveDailyData(todayScreenTime);
+      await _saveDailyData(serviceData.todayScreenTime);
 
       // Cleanup
       await screenSubscription?.cancel();
@@ -229,30 +239,30 @@ class PersistentTrackerService {
   }
 
   /// Handle screen state events in background
+  @pragma('vm:entry-point')
   static void _handleScreenEvent(
     ServiceInstance service,
     ScreenStateEvent event,
-    DateTime? screenOnTime,
-    int todayScreenTime,
+    _ServiceData serviceData,
   ) async {
     try {
       switch (event) {
         case ScreenStateEvent.SCREEN_ON:
-          screenOnTime = DateTime.now();
-          print('📱 Screen ON at $screenOnTime');
+          serviceData.screenOnTime = DateTime.now();
+          print('📱 Screen ON at ${serviceData.screenOnTime}');
           break;
           
         case ScreenStateEvent.SCREEN_OFF:
-          if (screenOnTime != null) {
+          if (serviceData.screenOnTime != null) {
             final screenOffTime = DateTime.now();
-            final sessionMinutes = screenOffTime.difference(screenOnTime).inMinutes;
+            final sessionMinutes = screenOffTime.difference(serviceData.screenOnTime!).inMinutes;
             
             if (sessionMinutes > 0) {
               // Save session
-              await _saveSession(screenOnTime, screenOffTime, sessionMinutes);
-              todayScreenTime += sessionMinutes;
+              await _saveSession(serviceData.screenOnTime!, screenOffTime, sessionMinutes);
+              serviceData.todayScreenTime += sessionMinutes;
               
-              print('📱 Screen OFF - Session: ${sessionMinutes}m (Total: ${todayScreenTime}m)');
+              print('📱 Screen OFF - Session: ${sessionMinutes}m (Total: ${serviceData.todayScreenTime}m)');
               
               // Update notification
               if (service is AndroidServiceInstance) {
@@ -263,7 +273,7 @@ class PersistentTrackerService {
               }
             }
             
-            screenOnTime = null;
+            serviceData.screenOnTime = null;
           }
           break;
           
@@ -280,23 +290,51 @@ class PersistentTrackerService {
   /// Save individual screen session
   static Future<void> _saveSession(DateTime start, DateTime end, int minutes) async {
     try {
-      // For background service, we'll use a simplified approach
-      // Store in local database only (sync to cloud periodically)
+      // Get current user ID from Supabase service
+      String? userId;
+      try {
+        final supabaseService = SupabaseService();
+        userId = supabaseService.currentUserId;
+        
+        // If no user ID, skip saving this session
+        if (userId == null || userId.isEmpty) {
+          print('⚠️ No authenticated user found, skipping session save');
+          return;
+        }
+      } catch (e) {
+        print('❌ Could not get user ID, skipping session save: $e');
+        return;
+      }
+
+      // Store in local database
       final db = DatabaseService();
       
+      // Generate unique ID using microseconds + random component
+      final now = DateTime.now();
+      final uniqueId = now.microsecondsSinceEpoch + (now.millisecond * 1000);
+      
       final log = ScreenTimeLog(
-        id: DateTime.now().millisecondsSinceEpoch,
-        userId: 'background_user', // Will be updated during sync
+        id: uniqueId,
+        userId: userId,
         startTime: start,
         endTime: end,
         durationMinutes: minutes,
         breakTaken: false,
-        createdAt: DateTime.now(),
+        createdAt: now,
         isSynced: false,
       );
 
       await db.insertScreenTimeEntry(log);
-      print('💾 Session saved locally: ${minutes}m');
+      print('💾 Session saved locally: ${minutes}m for user: $userId');
+      
+      // Trigger sync attempt (will be handled by improved sync service)
+      try {
+        final syncService = ImprovedSyncService();
+        // Don't await - let it run in background
+        syncService.performSync();
+      } catch (e) {
+        print('⚠️ Could not trigger sync: $e');
+      }
       
     } catch (e) {
       print('❌ Error saving session: $e');
@@ -335,13 +373,18 @@ class PersistentTrackerService {
       // May fail if no internet - that's OK, will retry later
       print('☁️ Attempting cloud sync...');
       
+      final syncService = ImprovedSyncService();
+      await syncService.performSync();
+      
     } catch (e) {
       print('❌ Cloud sync failed: $e');
+      // Don't rethrow - background sync should not fail the service
     }
   }
 
   /// iOS background handler
   @pragma('vm:entry-point')
+  @pragma('dart2js:tryInline')
   static Future<bool> _onIosBackground(ServiceInstance service) async {
     print('📱 iOS background mode activated');
     return true;

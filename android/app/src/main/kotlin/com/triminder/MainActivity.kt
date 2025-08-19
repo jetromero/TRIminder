@@ -1,4 +1,4 @@
-package com.example.triminder
+package com.triminder
 
 import io.flutter.embedding.android.FlutterActivity
 

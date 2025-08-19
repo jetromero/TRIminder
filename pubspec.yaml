@@ -44,9 +44,10 @@ dependencies:
   
   # Utilities
   uuid: ^4.2.1
+  http: ^1.1.0
   
   # For automatic screen state detection
-  screen_state: ^2.0.0
+  screen_state: ^4.1.1
   
   # For background services and auto-start
   flutter_background_service: ^5.0.5

@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:screen_state/screen_state.dart';
-import '../models/user_models.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
+import '../services/timer_manager.dart';
 
 /// Automatic screen time tracker that detects phone screen state
 /// Tracks screen ON/OFF events and calculates daily usage
@@ -13,54 +12,57 @@ class AutomaticScreenTracker extends ChangeNotifier {
   factory AutomaticScreenTracker() => _instance;
   AutomaticScreenTracker._internal();
 
-  // Screen state monitoring
-  StreamSubscription<ScreenStateEvent>? _screenStateSubscription;
-  Screen? _screen;
+  // Screen state monitoring (now uses centralized timer manager)
+  late TimerManager _timerManager;
   
   // Tracking state
   bool _isMonitoring = false;
-  DateTime? _screenOnTime;
-  DateTime? _lastScreenOffTime;
+  DateTime? _currentSessionStart;
   
-  // Daily statistics
+  // Daily statistics (loaded from database)
   int _todayScreenTimeMinutes = 0;
+  int _todayScreenTimeFromDatabase = 0; // Base total from database (without current session)
   int _currentSessionMinutes = 0;
-  final List<ScreenSession> _todaySessions = [];
   
   // XP and wellness data
-  int _todayXP = 0;
+  int _todayPotentialXP = 0; // XP that will be awarded at end of day
   String _wellnessRating = 'Unknown';
   List<String> _todayBadges = [];
+  DateTime? _lastXPAwardDate; // Track when XP was last awarded
 
   // Getters
   bool get isMonitoring => _isMonitoring;
   int get todayScreenTimeMinutes => _todayScreenTimeMinutes;
   int get currentSessionMinutes => _currentSessionMinutes;
-  int get todayXP => _todayXP;
+  int get todayXP => _todayPotentialXP;
   String get wellnessRating => _wellnessRating;
   List<String> get todayBadges => _todayBadges;
   String get todayScreenTime => _formatDuration(_todayScreenTimeMinutes);
   String get currentSession => _formatDuration(_currentSessionMinutes);
   
-  /// Start automatic screen monitoring
+  /// Start automatic screen monitoring (data display only - actual tracking handled by PersistentTrackerService)
   Future<bool> startMonitoring() async {
     if (_isMonitoring) return true;
 
     try {
-      _screen = Screen();
+      // Note: We don't start screen state monitoring here since PersistentTrackerService handles it
+      // This service only displays data and manages UI state
       
-      // Listen to screen state changes
-      _screenStateSubscription = _screen!.screenStateStream?.listen(
-        _onScreenStateChanged,
-        onError: (error) {
-          print('Screen state monitoring error: $error');
-        },
-      );
-
       _isMonitoring = true;
       await _loadTodayData();
       
-      print('Automatic screen monitoring started');
+      // Initialize centralized timer manager
+      _timerManager = TimerManager();
+      
+      // Register timer callbacks instead of creating separate timers
+      _timerManager.registerEvery30Seconds('screen_tracker_session', _updateCurrentSession);
+      _timerManager.registerEvery30Seconds('screen_tracker_refresh', _onDataRefreshTick);
+      _timerManager.registerEveryHour('screen_tracker_end_of_day', _onEndOfDayCheck);
+      
+      // Start the centralized timer system
+      _timerManager.start();
+      
+      print('Automatic screen monitoring started (display mode)');
       notifyListeners();
       return true;
       
@@ -74,176 +76,177 @@ class AutomaticScreenTracker extends ChangeNotifier {
   Future<void> stopMonitoring() async {
     if (!_isMonitoring) return;
 
-    await _screenStateSubscription?.cancel();
-    _screenStateSubscription = null;
-    _screen = null;
+    // Unregister from centralized timer
+    _timerManager.unregister('screen_tracker_session');
+    _timerManager.unregister('screen_tracker_refresh');
+    _timerManager.unregister('screen_tracker_end_of_day');
+    
     _isMonitoring = false;
-
-    // Save any ongoing session
-    if (_screenOnTime != null) {
-      await _endCurrentSession();
-    }
 
     print('Automatic screen monitoring stopped');
     notifyListeners();
   }
 
-  /// Handle screen state changes (ON/OFF)
-  void _onScreenStateChanged(ScreenStateEvent event) async {
-    switch (event) {
-      case ScreenStateEvent.SCREEN_ON:
-        await _onScreenTurnedOn();
-        break;
-      case ScreenStateEvent.SCREEN_OFF:
-        await _onScreenTurnedOff();
-        break;
-      default:
-        break;
-    }
-  }
+  // Note: Screen state monitoring methods removed - handled by PersistentTrackerService
 
-  /// Handle screen turned ON event
-  Future<void> _onScreenTurnedOn() async {
-    _screenOnTime = DateTime.now();
-    print('Screen turned ON at $_screenOnTime');
-    
-    // Start tracking current session
-    _startSessionTimer();
-    notifyListeners();
-  }
 
-  /// Handle screen turned OFF event
-  Future<void> _onScreenTurnedOff() async {
-    if (_screenOnTime == null) return;
 
-    _lastScreenOffTime = DateTime.now();
-    print('Screen turned OFF at $_lastScreenOffTime');
-    
-    await _endCurrentSession();
-    notifyListeners();
-  }
-
-  /// End current screen session and save data
-  Future<void> _endCurrentSession() async {
-    if (_screenOnTime == null || _lastScreenOffTime == null) return;
-
-    final sessionDuration = _lastScreenOffTime!.difference(_screenOnTime!);
-    final sessionMinutes = sessionDuration.inMinutes;
-
-    if (sessionMinutes > 0) {
-      // Create session record
-      final session = ScreenSession(
-        startTime: _screenOnTime!,
-        endTime: _lastScreenOffTime!,
-        durationMinutes: sessionMinutes,
-      );
-
-      _todaySessions.add(session);
-      _todayScreenTimeMinutes += sessionMinutes;
-
-      // Save to database
-      await _saveSession(session);
-      
-      // Update daily statistics
-      await _updateDailyStats();
-
-      print('Session ended: ${sessionMinutes}m (Total today: ${_todayScreenTimeMinutes}m)');
-    }
-
-    // Reset session tracking
-    _screenOnTime = null;
-    _lastScreenOffTime = null;
+  /// Reset current session (when screen turns off or app goes to background)
+  void resetCurrentSession() {
+    _currentSessionStart = null;
     _currentSessionMinutes = 0;
+    _updateRealTimeTodayTotal(); // Update total to show only database data
+    notifyListeners();
+    print('Current session reset');
   }
 
-  /// Start timer for current session updates
-  void _startSessionTimer() {
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_screenOnTime == null || !_isMonitoring) {
-        timer.cancel();
-        return;
-      }
-
-      _currentSessionMinutes = DateTime.now().difference(_screenOnTime!).inMinutes;
-      notifyListeners();
-    });
+  /// Start new session (when screen turns on or app comes to foreground)
+  void startNewSession() {
+    // Don't automatically start a new session - let PersistentTrackerService handle it
+    // Just refresh the data to show current state
+    refreshTodayData();
+    print('Session display refreshed - letting background service handle actual tracking');
   }
 
-  /// Save screen session to database
-  Future<void> _saveSession(ScreenSession session) async {
-    try {
-      final userId = SupabaseService().currentUserId;
-      if (userId == null) return;
-
-      final log = ScreenTimeLog(
-        id: DateTime.now().millisecondsSinceEpoch,
-        userId: userId,
-        startTime: session.startTime,
-        endTime: session.endTime,
-        durationMinutes: session.durationMinutes,
-        breakTaken: false,
-        createdAt: DateTime.now(),
-        isSynced: false,
-      );
-
-      // Save locally
-      await DatabaseService().insertScreenTimeEntry(log);
-
-      // Try to sync to Supabase
-      try {
-        await SupabaseService().insertScreenTimeLog(log);
-        await DatabaseService().markScreenTimeEntrySynced(log.id);
-      } catch (e) {
-        print('Failed to sync session to Supabase: $e');
-      }
-
-    } catch (e) {
-      print('Error saving session: $e');
-    }
+  /// Update today's total in real-time (database total + current session)
+  void _updateRealTimeTodayTotal() {
+    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
+    
+    // Also update the wellness stats based on new total
+    _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
+    _wellnessRating = _getWellnessRating(_todayScreenTimeMinutes);
+    _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
   }
 
-  /// Update daily statistics and XP
-  Future<void> _updateDailyStats() async {
-    // Calculate XP based on TOTAL daily usage (digital wellness approach)
-    _todayXP = _calculateDailyXP(_todayScreenTimeMinutes);
+  /// Update daily statistics display only (no XP award)
+  Future<void> _updateDailyStatsDisplay() async {
+    // Calculate potential XP that will be awarded at end of day
+    _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
     
     // Determine wellness rating
     _wellnessRating = _getWellnessRating(_todayScreenTimeMinutes);
     
     // Check for badges
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
-
-    // Update user XP in profile
-    await _updateUserDailyXP();
     
     notifyListeners();
+  }
+
+  /// Timer callback: Update current session display (called every 30s)
+  void _updateCurrentSession() {
+    if (!_isMonitoring) return;
+    
+    if (_currentSessionStart != null) {
+      final now = DateTime.now();
+      _currentSessionMinutes = now.difference(_currentSessionStart!).inMinutes;
+      _updateRealTimeTodayTotal();
+      notifyListeners();
+    }
+  }
+
+  /// Timer callback: Refresh data from database (called every 30s)
+  void _onDataRefreshTick() async {
+    if (!_isMonitoring) return;
+    await refreshTodayData();
+  }
+
+  /// Timer callback: Check for end of day (called every hour)
+  void _onEndOfDayCheck() async {
+    await _checkForNewDay();
+  }
+
+
+
+
+
+  /// Check if it's a new day and award previous day's XP
+  Future<void> _checkForNewDay() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // If we have screen time data but haven't awarded XP yet
+    if (_lastXPAwardDate == null) {
+      // This might be the first run, check if we should award yesterday's XP
+      final yesterday = today.subtract(const Duration(days: 1));
+      await _awardEndOfDayXPForDate(yesterday);
+    } else {
+      // Check if a day has passed since last XP award
+      final daysSinceLastAward = today.difference(_lastXPAwardDate!).inDays;
+      if (daysSinceLastAward >= 1) {
+        // Award XP for the previous day(s)
+        for (int i = 1; i <= daysSinceLastAward; i++) {
+          final dateToAward = _lastXPAwardDate!.add(Duration(days: i));
+          if (dateToAward.isBefore(today)) {
+            await _awardEndOfDayXPForDate(dateToAward);
+          }
+        }
+      }
+    }
+  }
+
+  /// Award XP at the end of day for a specific date
+  Future<void> _awardEndOfDayXPForDate(DateTime date) async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return;
+
+      // Get screen time for the specific date
+      final startOfDay = DateTime(date.year, date.month, date.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+      
+      final db = DatabaseService();
+      final dayLogs = await db.getScreenTimeEntriesForDateRange(
+        userId, 
+        startOfDay, 
+        endOfDay
+      );
+
+      final dayScreenTimeMinutes = dayLogs
+          .where((log) => log.durationMinutes != null)
+          .fold(0, (sum, log) => sum + log.durationMinutes!);
+
+      if (dayScreenTimeMinutes > 0) {
+        // Calculate final XP for that day
+        final finalXP = _calculateDailyXP(dayScreenTimeMinutes);
+        
+        if (finalXP > 0) {
+          // Award the XP to user profile
+          await _updateUserDailyXP(finalXP);
+          _lastXPAwardDate = date;
+          
+          print('End-of-day XP awarded for ${date.toLocal()}: $finalXP XP for ${dayScreenTimeMinutes}m screen time');
+        }
+      }
+    } catch (e) {
+      print('Error awarding end-of-day XP: $e');
+    }
   }
 
   /// Calculate daily XP based on TOTAL screen time (LESS = MORE XP)
   int _calculateDailyXP(int totalMinutes) {
     // Digital wellness XP tiers (daily total)
-    if (totalMinutes <= 60) {
-      return 100; // 🏆 Excellent! (<1 hour)
-    } else if (totalMinutes <= 120) {
-      return 75;  // 🥇 Great! (1-2 hours)
+    if (totalMinutes <= 120) {
+      return 100; // 🏆 Excellent! (<2 hours)
     } else if (totalMinutes <= 180) {
-      return 50;  // 🥈 Good (2-3 hours)
+      return 75;  // 🥇 Great! (2-3 hours)
     } else if (totalMinutes <= 240) {
-      return 25;  // 🥉 Fair (3-4 hours)
-    } else if (totalMinutes <= 360) {
-      return 10;  // ⚠️ High usage (4-6 hours)
+      return 50;  // 🥈 Good (3-4 hours)
+    } else if (totalMinutes <= 300) {
+      return 25;  // 🥉 Fair (4-5 hours)
+    } else if (totalMinutes <= 420) {
+      return 10;  // ⚠️ High usage (5-7 hours)
     } else {
-      return 0;   // 🚨 Excessive usage (6+ hours)
+      return 0;   // 🚨 Excessive usage (7+ hours)
     }
   }
 
   /// Get wellness rating based on daily usage
   String _getWellnessRating(int totalMinutes) {
-    if (totalMinutes <= 60) return 'Excellent 🏆';
-    if (totalMinutes <= 120) return 'Great 🥇';
-    if (totalMinutes <= 180) return 'Good 🥈';
-    if (totalMinutes <= 240) return 'Fair 🥉';
-    if (totalMinutes <= 360) return 'High ⚠️';
+    if (totalMinutes <= 120) return 'Excellent 🏆';
+    if (totalMinutes <= 180) return 'Great 🥇';
+    if (totalMinutes <= 240) return 'Good 🥈';
+    if (totalMinutes <= 300) return 'Fair 🥉';
+    if (totalMinutes <= 420) return 'High ⚠️';
     return 'Excessive 🚨';
   }
 
@@ -251,15 +254,19 @@ class AutomaticScreenTracker extends ChangeNotifier {
   List<String> _getDailyBadges(int totalMinutes) {
     List<String> badges = [];
     
-    if (totalMinutes <= 30) {
+    if (totalMinutes <= 60) {
       badges.add('Digital Monk'); // Ultra minimal
-    } else if (totalMinutes <= 60) {
+    } 
+    else if (totalMinutes <= 120) {
       badges.add('Mindful Master'); // Excellent
-    } else if (totalMinutes <= 90) {
+    } 
+    else if (totalMinutes <= 180) {
       badges.add('Balanced User'); // Very good
-    } else if (totalMinutes <= 120) {
+    } 
+    else if (totalMinutes <= 240) {
       badges.add('Conscious User'); // Good
-    } else if (totalMinutes <= 180) {
+    } 
+    else if (totalMinutes <= 300) {
       badges.add('Aware User'); // Okay
     }
     // No badges for excessive usage
@@ -267,19 +274,20 @@ class AutomaticScreenTracker extends ChangeNotifier {
     return badges;
   }
 
-  /// Update user's daily XP in profile
-  Future<void> _updateUserDailyXP() async {
+  /// Update user's daily XP in profile (only called at end of day)
+  Future<void> _updateUserDailyXP(int xpToAward) async {
     try {
       final userId = SupabaseService().currentUserId;
       if (userId == null) return;
 
       final userProfile = await SupabaseService().getUserProfile(userId);
       if (userProfile != null) {
-        // Award daily XP (replace, don't add to prevent double-counting)
+        // Award daily XP (only once per day)
         final updatedProfile = userProfile.copyWith(
-          xp: userProfile.xp + _todayXP,
+          xp: userProfile.xp + xpToAward,
         );
         await SupabaseService().updateUserProfile(updatedProfile);
+        print('User XP updated: +$xpToAward (Total: ${updatedProfile.xp})');
       }
     } catch (e) {
       print('Error updating user XP: $e');
@@ -290,7 +298,10 @@ class AutomaticScreenTracker extends ChangeNotifier {
   Future<void> _loadTodayData() async {
     try {
       final userId = SupabaseService().currentUserId;
-      if (userId == null) return;
+      if (userId == null) {
+        print('No user ID available for loading screen time data');
+        return;
+      }
 
       final today = DateTime.now();
       final startOfDay = DateTime(today.year, today.month, today.day);
@@ -303,15 +314,34 @@ class AutomaticScreenTracker extends ChangeNotifier {
         endOfDay
       );
 
-      _todayScreenTimeMinutes = todayLogs
+      print('Loaded ${todayLogs.length} screen time entries for today');
+      
+      // Debug: Print all entries
+      for (final log in todayLogs) {
+        print('Entry: ${log.userId} - ${log.durationMinutes}m at ${log.startTime}');
+      }
+
+      // Store database total separately (without current session)
+      _todayScreenTimeFromDatabase = todayLogs
           .where((log) => log.durationMinutes != null)
           .fold(0, (sum, log) => sum + log.durationMinutes!);
 
-      await _updateDailyStats();
+      // Update real-time total (database + current session)
+      _updateRealTimeTodayTotal();
+
+      print('Database screen time for today: $_todayScreenTimeFromDatabase minutes');
+      print('Real-time total screen time: $_todayScreenTimeMinutes minutes (including current session)');
+
+      await _updateDailyStatsDisplay();
 
     } catch (e) {
       print('Error loading today data: $e');
     }
+  }
+
+  /// Refresh today's data (call periodically to sync with background service)
+  Future<void> refreshTodayData() async {
+    await _loadTodayData();
   }
 
   /// Format duration in minutes
@@ -328,13 +358,18 @@ class AutomaticScreenTracker extends ChangeNotifier {
     }
   }
 
+  /// Manual check for end of day (call when app resumes)
+  Future<void> checkForEndOfDay() async {
+    await _checkForNewDay();
+  }
+
   /// Get detailed daily statistics
   Map<String, dynamic> getDailyStats() {
     return {
       'totalMinutes': _todayScreenTimeMinutes,
       'totalFormatted': todayScreenTime,
-      'sessionsCount': _todaySessions.length,
-      'xpEarned': _todayXP,
+      'sessionsCount': 0, // Sessions tracked by PersistentTrackerService
+      'xpEarned': _todayPotentialXP,
       'wellnessRating': _wellnessRating,
       'badges': _todayBadges,
       'isMonitoring': _isMonitoring,

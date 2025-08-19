@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
+import '../utils/app_logger.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -83,6 +84,15 @@ class DatabaseService {
         FOREIGN KEY (badgeId) REFERENCES badges (id)
       )
     ''');
+
+    // Sync metadata table (for improved sync service)
+    await db.execute('''
+      CREATE TABLE sync_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
   }
 
   // CRUD Operations for User Profiles
@@ -125,7 +135,7 @@ class DatabaseService {
   Future<List<ScreenTimeLog>> getScreenTimeLogs(String userId) async {
     final db = await database;
     final List<Map<String, dynamic>> maps = await db.query(
-      'screen_time_logs',
+      'screen_time_entries',
       where: 'userId = ?',
       whereArgs: [userId],
       orderBy: 'startTime DESC',
@@ -139,7 +149,7 @@ class DatabaseService {
   Future<ScreenTimeLog?> getScreenTimeLog(int logId) async {
     final db = await database;
     final List<Map<String, dynamic>> maps = await db.query(
-      'screen_time_logs',
+      'screen_time_entries',
       where: 'id = ?',
       whereArgs: [logId],
     );
@@ -153,7 +163,7 @@ class DatabaseService {
   Future<int> insertScreenTimeLog(ScreenTimeLog entry) async {
     final db = await database;
     return await db.insert(
-      'screen_time_logs',
+      'screen_time_entries',
       entry.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -162,7 +172,7 @@ class DatabaseService {
   Future<int> updateScreenTimeLog(ScreenTimeLog entry) async {
     final db = await database;
     return await db.update(
-      'screen_time_logs',
+      'screen_time_entries',
       entry.toMap(),
       where: 'id = ?',
       whereArgs: [entry.id],
@@ -217,7 +227,7 @@ class DatabaseService {
   Future<List<ScreenTimeLog>> getUnsyncedScreenTimeLogs() async {
     final db = await database;
     final List<Map<String, dynamic>> maps = await db.query(
-      'screen_time_entries',
+      'screen_time_entries', // Note: Keep as screen_time_entries (local table name)
       where: 'isSynced = ?',
       whereArgs: [0],
     );
@@ -227,20 +237,30 @@ class DatabaseService {
     });
   }
 
-  Future<int> markScreenTimeLogAsSynced(String id) async {
-    final db = await database;
-    return await db.update(
-      'screen_time_entries',
-      {'isSynced': 1},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-  }
+
 
   // Screen time operations
   Future<void> insertScreenTimeEntry(ScreenTimeLog entry) async {
-    final db = await database;
-    await db.insert('screen_time_entries', entry.toMap());
+    try {
+      final db = await database;
+      final result = await db.insert('screen_time_entries', entry.toMap());
+      AppLogger.database('Inserted screen time entry with ID: $result for user: ${entry.userId}', 'insert');
+    } catch (e) {
+      AppLogger.error('Failed to insert screen time entry', 'insert', e);
+      AppLogger.debug('Entry data: ${entry.toMap()}', 'insert');
+      
+      // Try to insert with a different ID if duplicate
+      if (e.toString().contains('UNIQUE constraint failed')) {
+        try {
+          final newEntry = entry.copyWith(id: DateTime.now().microsecondsSinceEpoch);
+          final db = await database;
+          final result = await db.insert('screen_time_entries', newEntry.toMap());
+          print('✅ Retry successful with new ID: $result');
+        } catch (retryError) {
+          print('❌ Retry also failed: $retryError');
+        }
+      }
+    }
   }
 
   Future<List<ScreenTimeLog>> getScreenTimeEntriesForDateRange(
@@ -273,11 +293,99 @@ class DatabaseService {
     );
   }
 
+  // Also create the method that was referenced in sync_service
+  Future<int> markScreenTimeLogAsSynced(int id) async {
+    final db = await database;
+    return await db.update(
+      'screen_time_entries',
+      {'isSynced': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<void> clearAllData() async {
     final db = await database;
     await db.delete('screen_time_entries');
     await db.delete('user_badges');
     await db.delete('user_profiles');
+    await db.delete('sync_metadata');
+  }
+
+  // Sync Metadata Operations (for improved sync service)
+
+  /// Get sync metadata value by key
+  Future<String?> getSyncMetadata(String key) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'sync_metadata',
+        where: 'key = ?',
+        whereArgs: [key],
+      );
+
+      if (maps.isNotEmpty) {
+        return maps.first['value'] as String?;
+      }
+      return null;
+    } catch (e) {
+      print('❌ Error getting sync metadata: $e');
+      return null;
+    }
+  }
+
+  /// Set sync metadata value
+  Future<void> setSyncMetadata(String key, String value) async {
+    try {
+      final db = await database;
+      await db.insert(
+        'sync_metadata',
+        {
+          'key': key,
+          'value': value,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (e) {
+      print('❌ Error setting sync metadata: $e');
+    }
+  }
+
+  /// Get last successful sync timestamp
+  Future<DateTime?> getLastSyncTimestamp() async {
+    final value = await getSyncMetadata('last_successful_sync');
+    if (value != null) {
+      try {
+        return DateTime.parse(value);
+      } catch (e) {
+        print('⚠️ Invalid sync timestamp format: $value');
+      }
+    }
+    return null;
+  }
+
+  /// Save last successful sync timestamp
+  Future<void> saveLastSyncTimestamp(DateTime timestamp) async {
+    await setSyncMetadata('last_successful_sync', timestamp.toIso8601String());
+  }
+
+  /// Get last cloud sync timestamp
+  Future<DateTime?> getLastCloudSyncTimestamp() async {
+    final value = await getSyncMetadata('last_cloud_sync');
+    if (value != null) {
+      try {
+        return DateTime.parse(value);
+      } catch (e) {
+        print('⚠️ Invalid cloud sync timestamp format: $value');
+      }
+    }
+    return null;
+  }
+
+  /// Save last cloud sync timestamp
+  Future<void> saveLastCloudSyncTimestamp(DateTime timestamp) async {
+    await setSyncMetadata('last_cloud_sync', timestamp.toIso8601String());
   }
 
   Future<void> closeDatabase() async {

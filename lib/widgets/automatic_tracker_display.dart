@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/automatic_screen_tracker.dart';
+import '../utils/responsive_utils.dart';
 
 /// Widget displaying automatic screen time tracking data
 /// Shows wellness-focused metrics where LESS usage = BETTER scores
@@ -58,9 +59,11 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
 
   @override
   Widget build(BuildContext context) {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+    
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: ResponsiveUtils.getCardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -70,21 +73,27 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                 Icon(
                   Icons.auto_awesome,
                   color: _tracker.isMonitoring ? Colors.green : Colors.grey,
+                  size: ResponsiveUtils.getIconSize(context),
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  'Digital Wellness Tracker',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                Expanded(
+                  child: Text(
+                    'Digital Wellness Tracker',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: (Theme.of(context).textTheme.titleMedium?.fontSize ?? 16) * fontScale,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12), 
+                    vertical: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8),
+                  ),
                   decoration: BoxDecoration(
                     color: _tracker.isMonitoring 
-                                            ? Colors.green.withValues(alpha: 0.2)
-                    : Colors.grey.withValues(alpha: 0.2),
+                        ? Colors.green.withValues(alpha: 0.2)
+                        : Colors.grey.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -92,58 +101,36 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: _tracker.isMonitoring ? Colors.green : Colors.grey,
                       fontWeight: FontWeight.bold,
+                      fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
 
-            // Today's Screen Time
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
+            // Today's Screen Time - Responsive layout
+            context.isMobile 
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Today\'s Screen Time',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _tracker.todayScreenTime,
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: _getWellnessColor(),
-                      ),
-                    ),
+                    _buildScreenTimeSection(context, fontScale),
+                    SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20)),
+                    _buildWellnessSection(context, fontScale),
                   ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Digital Wellness',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _tracker.wellnessRating,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: _getWellnessColor(),
-                      ),
-                    ),
+                    _buildScreenTimeSection(context, fontScale),
+                    _buildWellnessSection(context, fontScale),
                   ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
 
             // XP Earned Today
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveUtils.getCardPadding(context),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
@@ -153,44 +140,101 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
-                children: [
-                  const Icon(Icons.star, color: Colors.amber, size: 24),
-                  const SizedBox(width: 8),
-                  Column(
+              child: context.isMobile
+                ? Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'XP Earned Today',
-                        style: Theme.of(context).textTheme.bodySmall,
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.star, 
+                            color: Colors.amber, 
+                            size: ResponsiveUtils.getIconSize(context),
+                          ),
+                          SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Potential XP Today',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                                ),
+                              ),
+                              Text(
+                                '+${_tracker.todayXP} XP',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber.shade700,
+                                  fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 22) * fontScale,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      Text(
-                        '+${_tracker.todayXP} XP',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.amber.shade700,
+                      if (_tracker.todayXP > 0) ...[
+                        SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                        Text(
+                          'XP awarded at end of day!',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.amber.shade700,
+                            fontStyle: FontStyle.italic,
+                            fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                          ),
                         ),
+                      ],
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Icon(
+                        Icons.star, 
+                        color: Colors.amber, 
+                        size: ResponsiveUtils.getIconSize(context),
                       ),
+                      SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Potential XP Today',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                            ),
+                          ),
+                          Text(
+                            '+${_tracker.todayXP} XP',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.amber.shade700,
+                              fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 22) * fontScale,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      if (_tracker.todayXP > 0)
+                        Flexible(
+                          child: Text(
+                            'XP awarded at end of day!',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.amber.shade700,
+                              fontStyle: FontStyle.italic,
+                              fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                            ),
+                            textAlign: TextAlign.end,
+                          ),
+                        ),
                     ],
                   ),
-                  const Spacer(),
-                  if (_tracker.todayXP > 0)
-                    Text(
-                      'Less screen time = More XP!',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.amber.shade700,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                ],
-              ),
             ),
 
             // Current Session (if screen is on)
             if (_tracker.currentSessionMinutes > 0) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveUtils.getSpacing(context)),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: ResponsiveUtils.getCardPadding(context),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                   borderRadius: BorderRadius.circular(8),
@@ -200,13 +244,16 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                     Icon(
                       Icons.smartphone,
                       color: Colors.blue,
-                      size: 20,
+                      size: ResponsiveUtils.getIconSize(context, mobile: 20, tablet: 24, desktop: 28),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Current session: ${_tracker.currentSession}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
+                    SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                    Expanded(
+                      child: Text(
+                        'Current session: ${_tracker.currentSession}',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
+                        ),
                       ),
                     ),
                   ],
@@ -216,20 +263,24 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
 
             // Today's Badges
             if (_tracker.todayBadges.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              SizedBox(height: ResponsiveUtils.getSpacing(context)),
               Text(
                 'Today\'s Badges',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.bold,
+                  fontSize: (Theme.of(context).textTheme.titleSmall?.fontSize ?? 14) * fontScale,
                 ),
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
               Wrap(
-                spacing: 8,
-                runSpacing: 4,
+                spacing: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12),
+                runSpacing: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8),
                 children: _tracker.todayBadges
                     .map((badge) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12),
+                            vertical: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8),
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.green.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(12),
@@ -239,6 +290,7 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Colors.green.shade700,
                               fontWeight: FontWeight.w500,
+                              fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                             ),
                           ),
                         ))
@@ -247,9 +299,9 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
             ],
 
             // Motivational Message
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: ResponsiveUtils.getCardPadding(context),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
@@ -258,15 +310,16 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
                 children: [
                   Icon(
                     Icons.lightbulb_outline,
-                    size: 20,
+                    size: ResponsiveUtils.getIconSize(context, mobile: 20, tablet: 24, desktop: 28),
                     color: Theme.of(context).colorScheme.primary,
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
                   Expanded(
                     child: Text(
                       _getMotivationalMessage(),
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.primary,
+                        fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                       ),
                     ),
                   ),
@@ -276,6 +329,52 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildScreenTimeSection(BuildContext context, double fontScale) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Today\'s Screen Time',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+          ),
+        ),
+        SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+        Text(
+          _tracker.todayScreenTime,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: _getWellnessColor(),
+            fontSize: (Theme.of(context).textTheme.headlineSmall?.fontSize ?? 24) * fontScale,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWellnessSection(BuildContext context, double fontScale) {
+    return Column(
+      crossAxisAlignment: context.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      children: [
+        Text(
+          'Digital Wellness',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+          ),
+        ),
+        SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+        Text(
+          _tracker.wellnessRating,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: _getWellnessColor(),
+            fontSize: (Theme.of(context).textTheme.titleMedium?.fontSize ?? 16) * fontScale,
+          ),
+        ),
+      ],
     );
   }
 

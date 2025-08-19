@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import '../auth/login_screen.dart';
 import '../../services/supabase_service.dart';
 import '../../services/automatic_screen_tracker.dart';
+import '../../services/improved_sync_service.dart';
+import '../../services/user_session_manager.dart';
 import '../../models/user_models.dart';
 import '../../utils/level_calculator.dart';
+import '../../utils/responsive_utils.dart';
 import '../../widgets/automatic_tracker_display.dart';
+import '../../widgets/sync_status_widget.dart';
+import '../../utils/debug_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -70,6 +75,15 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _automaticTracker = AutomaticScreenTracker();
     _loadUserData();
+    _startAutomaticTracking();
+  }
+
+  Future<void> _startAutomaticTracking() async {
+    // Start the automatic screen tracker for UI display
+    final started = await _automaticTracker.startMonitoring();
+    if (!started) {
+      print('Failed to start automatic screen tracking');
+    }
   }
 
   @override
@@ -84,15 +98,20 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     
     switch (state) {
       case AppLifecycleState.paused:
-        // App goes to background - automatic tracking continues
-        print('App paused - automatic tracking continues');
+        // App goes to background - just log, don't reset session
+        // The PersistentTrackerService handles actual screen OFF events
+        print('App paused - background service continues tracking');
         break;
       case AppLifecycleState.resumed:
-        // App comes to foreground - automatic tracking continues
-        print('App resumed - automatic tracking continues');
+        // App comes to foreground - refresh data and sync, but don't restart session
+        // The PersistentTrackerService handles screen ON events
+        print('App resumed - refreshing data and syncing');
+        _automaticTracker.checkForEndOfDay();
+        _automaticTracker.refreshTodayData();
+        ImprovedSyncService().performSync();
         break;
       case AppLifecycleState.detached:
-        // App is being terminated - stop automatic tracking
+        // App is being terminated - stop automatic tracking display
         _automaticTracker.stopMonitoring();
         break;
       default:
@@ -118,14 +137,168 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     }
   }
 
+  List<Widget> _getDashboardWidgets() {
+    return [
+      // Welcome Section
+      WelcomeCard(userProfile: userProfile),
+      
+      // Automatic Screen Time Tracker  
+      const AutomaticTrackerDisplay(),
+      
+      // XP Progress
+      XPProgressCard(userProfile: userProfile),
+      
+      // Recent Badges
+      const RecentBadgesCard(),
+      
+      // Sync Status (for monitoring data sync)
+      const SyncStatusWidget(),
+      
+      // Debug Panel (temporary for testing)
+      Card(
+        child: Padding(
+          padding: ResponsiveUtils.getCardPadding(context),
+          child: Column(
+            children: [
+              Text('Debug Panel', style: Theme.of(context).textTheme.titleMedium),
+              // First row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton(
+                    onPressed: () async {
+                      await DebugHelper.checkAuthStatus();
+                    },
+                    child: const Text('Auth'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      await DebugHelper.checkDatabaseContent();
+                    },
+                    child: const Text('Check DB'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      await DebugHelper.testScreenTimeTracking();
+                    },
+                    child: const Text('Test Track'),
+                  ),
+                ],
+              ),
+              SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+              // Second row - Session debugging
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  ElevatedButton(
+                    onPressed: () async {
+                      await DebugHelper.addTestScreenTimeEntry();
+                      await _automaticTracker.refreshTodayData();
+                      setState(() {}); // Refresh UI
+                    },
+                    child: const Text('Add Test'),
+                  ),
+                              ElevatedButton(
+              onPressed: () async {
+                await DebugHelper.testBidirectionalSync();
+              },
+              child: const Text('Old Sync'),
+            ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      await DebugHelper.checkSessionStatus();
+                    },
+                    child: const Text('Session'),
+                  ),
+                ],
+              ),
+                      SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+        // Third row - Data management
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ElevatedButton(
+              onPressed: () async {
+                await DebugHelper.saveCurrentSessionManually();
+                await _automaticTracker.refreshTodayData();
+                setState(() {}); // Refresh UI
+              },
+              child: const Text('Save Session'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // Show confirmation dialog
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Clear All Data'),
+                    content: const Text('This will delete all local data. Are you sure?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                );
+                
+                if (confirmed == true) {
+                  await DebugHelper.clearAllLocalData();
+                  setState(() {}); // Refresh UI
+                }
+              },
+              child: const Text('Clear Data'),
+            ),
+            const Expanded(child: SizedBox()), // Spacer
+          ],
+        ),
+        SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+        // Fourth row - Sync testing
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            ElevatedButton(
+              onPressed: () async {
+                await DebugHelper.testImprovedSync();
+              },
+              child: const Text('New Sync'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await DebugHelper.compareSyncMethods();
+              },
+              child: const Text('Compare'),
+            ),
+            const Expanded(child: SizedBox()), // Spacer
+          ],
+        ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('TRIminder Dashboard'),
+        title: Text(
+          'TRIminder Dashboard',
+          style: TextStyle(
+            fontSize: 20 * ResponsiveUtils.getFontScale(context),
+          ),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications),
+            icon: Icon(
+              Icons.notifications,
+              size: ResponsiveUtils.getIconSize(context),
+            ),
             onPressed: () {
               // TODO: Show notifications
             },
@@ -134,26 +307,19 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       ),
       body: isLoading 
         ? const Center(child: CircularProgressIndicator())
-        : Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Welcome Section
-                WelcomeCard(userProfile: userProfile),
-                const SizedBox(height: 16),
-                
-                // Automatic Screen Time Tracker  
-                const AutomaticTrackerDisplay(),
-                const SizedBox(height: 16),
-                
-                // XP Progress
-                XPProgressCard(userProfile: userProfile),
-                const SizedBox(height: 16),
-                
-                // Recent Badges
-                const RecentBadgesCard(),
-              ],
+        : Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: ResponsiveUtils.getMaxContentWidth(context),
+              ),
+              child: ListView.separated(
+                padding: ResponsiveUtils.getScreenPadding(context),
+                itemCount: _getDashboardWidgets().length,
+                separatorBuilder: (context, index) => SizedBox(
+                  height: ResponsiveUtils.getSpacing(context),
+                ),
+                itemBuilder: (context, index) => _getDashboardWidgets()[index],
+              ),
             ),
           ),
     );
@@ -167,9 +333,11 @@ class WelcomeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+    
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: ResponsiveUtils.getCardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -177,13 +345,15 @@ class WelcomeCard extends StatelessWidget {
               'Welcome back, ${userProfile?.fullName ?? 'Student'}!',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,
+                fontSize: (Theme.of(context).textTheme.headlineSmall?.fontSize ?? 24) * fontScale,
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             Text(
               'Ready to continue your digital wellness journey?',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
               ),
             ),
           ],
@@ -282,8 +452,6 @@ class XPProgressCard extends StatelessWidget {
   
   const XPProgressCard({super.key, this.userProfile});
 
-
-
   @override
   Widget build(BuildContext context) {
     final xp = userProfile?.xp ?? 0;
@@ -293,24 +461,27 @@ class XPProgressCard extends StatelessWidget {
     final xpInCurrentLevel = levelProgress['currentLevelXP']!;
     final xpNeededForNextLevel = levelProgress['requiredForNextLevel']!;
     final xpRemaining = levelProgress['remaining']!;
+    final fontScale = ResponsiveUtils.getFontScale(context);
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: ResponsiveUtils.getCardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.star,
                   color: Colors.amber,
+                  size: ResponsiveUtils.getIconSize(context),
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
                 Text(
                   'XP Progress',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
+                    fontSize: (Theme.of(context).textTheme.titleMedium?.fontSize ?? 16) * fontScale,
                   ),
                 ),
                 const Spacer(),
@@ -319,34 +490,60 @@ class XPProgressCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: Theme.of(context).colorScheme.primary,
+                    fontSize: (Theme.of(context).textTheme.titleSmall?.fontSize ?? 14) * fontScale,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Text('$xpInCurrentLevel / $xpNeededForNextLevel XP'),
-                const Spacer(),
-                Text('Level ${level + 1}'),
-              ],
-            ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
+            // Make this responsive for different screen sizes
+            context.isMobile 
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                      style: TextStyle(fontSize: 14 * fontScale),
+                    ),
+                    SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+                    Text(
+                      'Level ${level + 1}',
+                      style: TextStyle(fontSize: 14 * fontScale),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Text(
+                      '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                      style: TextStyle(fontSize: 14 * fontScale),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Level ${level + 1}',
+                      style: TextStyle(fontSize: 14 * fontScale),
+                    ),
+                  ],
+                ),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             LinearProgressIndicator(
               value: progress.clamp(0.0, 1.0),
-              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
               valueColor: AlwaysStoppedAnimation<Color>(
                 Theme.of(context).colorScheme.primary,
               ),
+              minHeight: context.isMobile ? 6 : 8,
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             Text(
               xp == 0 
                 ? 'Start tracking to earn XP! Need ${LevelCalculator.getXPRequiredForLevel(1)} XP for Level 2' 
                 : xpRemaining > 0 
                     ? '$xpRemaining XP to Level ${level + 1}'
                     : 'Ready to level up!',
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+              ),
             ),
           ],
         ),
@@ -360,9 +557,12 @@ class RecentBadgesCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+    final iconSize = ResponsiveUtils.getIconSize(context, mobile: 48, tablet: 56, desktop: 64);
+    
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: ResponsiveUtils.getCardPadding(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -370,26 +570,27 @@ class RecentBadgesCard extends StatelessWidget {
               'Recent Badges',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.bold,
+                fontSize: (Theme.of(context).textTheme.titleMedium?.fontSize ?? 16) * fontScale,
               ),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
             // Show "no badges yet" for new users
             Row(
               children: [
                 Container(
-                  width: 48,
-                  height: 48,
+                  width: iconSize,
+                  height: iconSize,
                   decoration: BoxDecoration(
                     color: Colors.grey.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(iconSize / 2),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.emoji_events_outlined,
                     color: Colors.grey,
-                    size: 24,
+                    size: iconSize * 0.5,
                   ),
                 ),
-                const SizedBox(width: 12),
+                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20)),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,12 +600,15 @@ class RecentBadgesCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: Colors.grey,
+                          fontSize: (Theme.of(context).textTheme.titleSmall?.fontSize ?? 14) * fontScale,
                         ),
                       ),
+                      SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
                       Text(
                         'Start tracking your screen time to earn badges!',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey,
+                          fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                         ),
                       ),
                     ],
@@ -438,9 +642,14 @@ class RankingsTab extends StatelessWidget {
   }
 }
 
-class ProfileTab extends StatelessWidget {
+class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
 
+  @override
+  State<ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -462,13 +671,49 @@ class ProfileTab extends StatelessWidget {
                       child: const Text('Cancel'),
                     ),
                     TextButton(
-                      onPressed: () {
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(
-                            builder: (context) => const LoginScreen(),
+                      onPressed: () async {
+                        Navigator.of(context).pop(); // Close dialog first
+                        
+                        // Show loading indicator
+                        showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (context) => const Center(
+                            child: CircularProgressIndicator(),
                           ),
-                          (route) => false,
                         );
+                        
+                        try {
+                          // Proper logout with session cleanup
+                          await UserSessionManager().logoutCurrentUser();
+                          
+                          if (mounted) {
+                            Navigator.of(context).pop(); // Close loading dialog
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (context) => const LoginScreen(),
+                              ),
+                              (route) => false,
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            Navigator.of(context).pop(); // Close loading dialog
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Logout error: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            // Force navigation anyway
+                            Navigator.of(context).pushAndRemoveUntil(
+                              MaterialPageRoute(
+                                builder: (context) => const LoginScreen(),
+                              ),
+                              (route) => false,
+                            );
+                          }
+                        }
                       },
                       child: const Text('Logout'),
                     ),

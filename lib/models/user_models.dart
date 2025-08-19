@@ -180,7 +180,7 @@ class ScreenTimeLog {
       'user_id': userId,
       'start_time': startTime.toIso8601String(),
       'end_time': endTime?.toIso8601String(),
-      'duration_minutes': durationMinutes,
+      // Note: duration_minutes is excluded - it's a generated column in Supabase
       'break_taken': breakTaken,
       'created_at': createdAt.toIso8601String(),
     };
