@@ -10,6 +10,7 @@ import '../../utils/responsive_utils.dart';
 import '../../widgets/automatic_tracker_display.dart';
 import '../../widgets/sync_status_widget.dart';
 import '../../utils/debug_helper.dart';
+import '../../services/persistent_tracker_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -93,8 +94,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
     
     switch (state) {
       case AppLifecycleState.paused:
@@ -108,7 +108,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         print('App resumed - refreshing data and syncing');
         _automaticTracker.checkForEndOfDay();
         _automaticTracker.refreshTodayData();
-        ImprovedSyncService().performSync();
+        await ImprovedSyncService().performSync();
+        // Reload background service data to match dashboard
+        await PersistentTrackerService.reloadTodayData();
         break;
       case AppLifecycleState.detached:
         // App is being terminated - stop automatic tracking display

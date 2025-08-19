@@ -113,6 +113,22 @@ class PersistentTrackerService {
     }
   }
 
+  /// Force reload today's screen time data (called from foreground app)
+  static Future<void> reloadTodayData() async {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (isRunning) {
+        // Send message to background service to reload data
+        service.invoke('reload_today_data');
+        print('📊 Sent reload command to background service');
+      }
+    } catch (e) {
+      print('❌ Error sending reload command: $e');
+    }
+  }
+
   /// Request necessary permissions for background operation
   static Future<bool> _requestPermissions() async {
     final permissions = [
@@ -146,11 +162,17 @@ class PersistentTrackerService {
     final serviceData = _ServiceData();
     serviceData.lastSaveDate = DateTime.now();
 
-    // Update notification
+    // Load today's total screen time from database
+    await _loadTodayScreenTime(serviceData);
+
+    // Update notification with loaded total
     if (service is AndroidServiceInstance) {
+      final hours = serviceData.todayScreenTime ~/ 60;
+      final minutes = serviceData.todayScreenTime % 60;
+      final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
       service.setForegroundNotificationInfo(
         title: 'TRIminder Active',
-        content: 'Monitoring digital wellness 📱',
+        content: 'Today: $timeStr screen time 📱',
       );
     }
 
@@ -188,6 +210,9 @@ class PersistentTrackerService {
     // Periodic tasks (every 5 minutes)
     Timer.periodic(const Duration(minutes: 5), (timer) async {
       try {
+        // Reload today's data to stay in sync with dashboard
+        await _loadTodayScreenTime(serviceData);
+        
         // Update notification with current stats
         final hours = serviceData.todayScreenTime ~/ 60;
         final minutes = serviceData.todayScreenTime % 60;
@@ -236,6 +261,85 @@ class PersistentTrackerService {
       await screenSubscription?.cancel();
       service.stopSelf();
     });
+
+    // Listen for reload command
+    service.on('reload_today_data').listen((event) async {
+      print('🔄 Received reload command');
+      await _loadTodayScreenTime(serviceData);
+      
+      // Update notification with new data
+      if (service is AndroidServiceInstance) {
+        final hours = serviceData.todayScreenTime ~/ 60;
+        final minutes = serviceData.todayScreenTime % 60;
+        final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+        service.setForegroundNotificationInfo(
+          title: 'TRIminder Tracking',
+          content: 'Today: $timeStr screen time',
+        );
+      }
+    });
+  }
+
+  /// Load today's total screen time from database
+  static Future<void> _loadTodayScreenTime(_ServiceData serviceData) async {
+    try {
+      // Get current user ID (try Supabase first, then fallback to persisted)
+      String? userId;
+      try {
+        userId = SupabaseService().currentUserId;
+      } catch (e) {
+        print('ℹ️ Supabase not available in background isolate: $e');
+      }
+
+      if (userId == null || userId.isEmpty) {
+        try {
+          final db = DatabaseService();
+          final persisted = await db.getSyncMetadata('current_user_id');
+          if (persisted != null && persisted.isNotEmpty) {
+            userId = persisted;
+            print('ℹ️ Using persisted user id for loading today\'s total: $userId');
+          }
+        } catch (e) {
+          print('❌ Failed to read persisted user id: $e');
+        }
+      }
+
+      if (userId == null || userId.isEmpty) {
+        print('⚠️ No authenticated user found, starting with 0 minutes');
+        serviceData.todayScreenTime = 0;
+        return;
+      }
+
+      // Calculate today's date range
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final todayEnd = todayStart.add(const Duration(days: 1));
+
+      // Query database for today's sessions
+      final db = DatabaseService();
+      final todayLogs = await db.getScreenTimeEntriesForDateRange(userId, todayStart, todayEnd);
+      
+      print('🔍 Background service debug:');
+      print('   - User ID: $userId');
+      print('   - Date range: ${todayStart.toIso8601String()} to ${todayEnd.toIso8601String()}');
+      print('   - Found ${todayLogs.length} logs');
+      
+      // Calculate total minutes for today
+      int totalMinutes = 0;
+      for (final log in todayLogs) {
+        if (log.durationMinutes != null) {
+          totalMinutes += log.durationMinutes!;
+          print('   - Log: ${log.durationMinutes}m at ${log.startTime}');
+        }
+      }
+
+      serviceData.todayScreenTime = totalMinutes;
+      print('📊 Loaded today\'s screen time from database: ${totalMinutes} minutes');
+      
+    } catch (e) {
+      print('❌ Error loading today\'s screen time: $e');
+      serviceData.todayScreenTime = 0;
+    }
   }
 
   /// Handle screen state events in background

@@ -153,7 +153,7 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [logId],
     );
-
+    
     if (maps.isNotEmpty) {
       return ScreenTimeLog.fromMap(maps.first);
     }

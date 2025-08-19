@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'screens/auth/login_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/supabase_service.dart';
 import 'services/persistent_tracker_service.dart';
 
@@ -48,7 +48,7 @@ class TRIminderApp extends StatelessWidget {
           elevation: 0,
         ),
       ),
-      home: const LoginScreen(),
+      home: const SplashScreen(),
     );
   }
 }

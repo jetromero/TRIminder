@@ -314,6 +314,11 @@ class AutomaticScreenTracker extends ChangeNotifier {
         endOfDay
       );
 
+      print('🔍 Dashboard debug:');
+      print('   - User ID: $userId');
+      print('   - Date range: ${startOfDay.toIso8601String()} to ${endOfDay.toIso8601String()}');
+      print('   - Found ${todayLogs.length} logs');
+
       print('Loaded ${todayLogs.length} screen time entries for today');
       
       // Debug: Print all entries
