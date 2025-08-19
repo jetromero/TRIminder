@@ -288,7 +288,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'TRIminder Dashboard',
+          'Dashboard',
           style: TextStyle(
             fontSize: 20 * ResponsiveUtils.getFontScale(context),
           ),
