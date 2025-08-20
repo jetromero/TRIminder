@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 import '../services/timer_manager.dart';
@@ -370,24 +371,29 @@ class AutomaticScreenTracker extends ChangeNotifier {
   /// Try to sync current session state from background service
   Future<void> _syncCurrentSessionFromBackground() async {
     try {
-      // Send request to background service to get current session state
-      final service = FlutterBackgroundService();
-      final isRunning = await service.isRunning();
+      // Read session data from SharedPreferences (set by background service)
+      final prefs = await SharedPreferences.getInstance();
+      final hasActiveSession = prefs.getBool('has_active_session') ?? false;
       
-      if (isRunning) {
-        // Request current session state from background service
-        service.invoke('get_current_session');
+      if (hasActiveSession) {
+        final sessionStartTimeMs = prefs.getInt('session_start_time');
+        final currentMinutes = prefs.getInt('current_session_minutes') ?? 0;
         
-        // For now, we'll estimate based on screen state
-        // In a full implementation, the background service would respond with session data
-        _currentSessionStart = null; // Would be set by background service response
-        _currentSessionMinutes = 0;  // Would be calculated from background service
+        print('🔍 Reading session data: hasActiveSession=$hasActiveSession, startTimeMs=$sessionStartTimeMs, currentMinutes=$currentMinutes');
         
-        // TODO: Implement proper response handling from background service
-        // This would require adding a listener for 'current_session_response' events
+        if (sessionStartTimeMs != null) {
+          _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
+          _currentSessionMinutes = currentMinutes;
+          print('📱 Found active session: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
+        } else {
+          _currentSessionStart = null;
+          _currentSessionMinutes = 0;
+          print('📱 Session start time is null');
+        }
       } else {
         _currentSessionStart = null;
         _currentSessionMinutes = 0;
+        print('📱 No active session found (hasActiveSession=false)');
       }
     } catch (e) {
       print('❌ Error syncing session from background: $e');

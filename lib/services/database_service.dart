@@ -93,6 +93,11 @@ class DatabaseService {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     ''');
+
+    // Add performance indexes
+    await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
+    await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
+    await db.execute('CREATE INDEX idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
   }
 
   // CRUD Operations for User Profiles

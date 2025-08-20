@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:screen_state/screen_state.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user_models.dart';
 import '../services/database_service.dart';
 import '../services/supabase_service.dart';
@@ -338,6 +339,27 @@ class PersistentTrackerService {
           liveExtra = sessionSeconds ~/ 60; // floor to minutes
           if (liveExtra > 0) {
             sessionInfo = ' + ${liveExtra}m active';
+          }
+          
+          // Store current session info for dashboard access via SharedPreferences
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('has_active_session', true);
+            await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
+            await prefs.setInt('current_session_minutes', liveExtra);
+            print('💾 Stored session data: active=true, start=${serviceData.screenOnTime!.toLocal()}, minutes=$liveExtra');
+          } catch (e) {
+            print('❌ Error storing session data: $e');
+          }
+        } else {
+          // No active session
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('has_active_session', false);
+            await prefs.remove('session_start_time');
+            await prefs.setInt('current_session_minutes', 0);
+          } catch (e) {
+            print('❌ Error clearing session data: $e');
           }
         }
 

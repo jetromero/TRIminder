@@ -104,6 +104,17 @@ class ImprovedSyncService extends ChangeNotifier {
       return false;
     }
 
+    // Rate limiting: Don't sync too frequently
+    if (_lastSuccessfulSync != null && !isInitialLogin) {
+      final timeSinceLastSync = DateTime.now().difference(_lastSuccessfulSync!);
+      final minSyncInterval = Duration(minutes: 2); // Minimum 2 minutes between syncs
+      
+      if (timeSinceLastSync < minSyncInterval) {
+        AppLogger.timer('Rate limiting sync - only ${timeSinceLastSync.inMinutes}m since last sync (min: ${minSyncInterval.inMinutes}m)', 'rate_limit');
+        return false;
+      }
+    }
+
     _isSyncing = true;
     _syncAttempts++;
     
