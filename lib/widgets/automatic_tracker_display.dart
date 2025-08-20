@@ -132,36 +132,7 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
             ],
           ),
 
-          // Current Session (if screen is on)
-          if (_tracker.currentSessionMinutes > 0) ...[
-            SizedBox(height: ResponsiveUtils.getSpacing(context)),
-            Container(
-              padding: ResponsiveUtils.getCardPadding(context),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.smartphone,
-                    color: Colors.blue,
-                    size: ResponsiveUtils.getIconSize(context, mobile: 20, tablet: 24, desktop: 28),
-                  ),
-                  SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-                  Expanded(
-                    child: Text(
-                      'Current session: ${_tracker.currentSession}',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          // Current session indicator removed for consistency
 
           // Today's Badges
           if (_tracker.todayBadges.isNotEmpty) ...[
@@ -223,28 +194,7 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
             fontSize: (Theme.of(context).textTheme.headlineSmall?.fontSize ?? 24) * fontScale,
           ),
         ),
-        // Live session indicator
-        if (_tracker.currentSessionMinutes > 0) ...[
-          SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
-          Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: ResponsiveUtils.getSpacing(context, mobile: 6, tablet: 8, desktop: 10),
-              vertical: ResponsiveUtils.getSpacing(context, mobile: 2, tablet: 4, desktop: 6),
-            ),
-            decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '+ ${_tracker.currentSession} active',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.green.shade700,
-                fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
+        // Live session indicator removed for consistency
       ],
     );
   }

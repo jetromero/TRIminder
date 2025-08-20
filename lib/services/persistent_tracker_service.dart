@@ -13,6 +13,7 @@ import '../services/improved_sync_service.dart';
 /// Data wrapper class for service variables (enables reference passing)
 class _ServiceData {
   DateTime? screenOnTime;
+  DateTime? screenOffTime; // Track when screen went off for timeout logic
   int todayScreenTime = 0;
   DateTime lastSaveDate = DateTime.now();
 }
@@ -192,25 +193,71 @@ class PersistentTrackerService {
     }
   }
 
-  /// Get current session state from background service
-  static Future<DateTime?> getCurrentSessionStartTime() async {
+  /// Get current session data directly from background service
+  static Future<Map<String, dynamic>> getCurrentSessionData() async {
     try {
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
       
-      if (isRunning) {
-        // Send session state request to background service
-        service.invoke('get_session_state');
-        print('📱 Sent session state request to background service');
-        // Note: This would need to be implemented in the background service
-        // For now, return null as the background service doesn't expose this
-        return null;
-      } else {
-        return null;
+      if (!isRunning) {
+        return {
+          'hasActiveSession': false,
+          'sessionStartTime': null,
+          'currentMinutes': 0,
+          'todayTotal': 0,
+          'error': 'Service not running',
+        };
       }
+
+      // Trigger session data update in background service
+      service.invoke('get_session_data');
+      
+      // Wait longer for the background service to update SharedPreferences
+      await Future.delayed(const Duration(milliseconds: 300));
+      
+      // Get the updated data from SharedPreferences with retry logic
+      Map<String, dynamic> sessionData = await _getSessionDataFromSharedPreferences();
+      
+      // If we got stale data (0 minutes but service says active), retry once
+      if (sessionData['hasActiveSession'] == true && sessionData['currentMinutes'] == 0) {
+        print('🔄 Retrying session data fetch due to stale data');
+        await Future.delayed(const Duration(milliseconds: 200));
+        sessionData = await _getSessionDataFromSharedPreferences();
+      }
+      
+      return sessionData;
     } catch (e) {
-      print('❌ Error getting session state: $e');
-      return null;
+      print('❌ Error getting session data from service: $e');
+      // Fallback to SharedPreferences
+      return await _getSessionDataFromSharedPreferences();
+    }
+  }
+
+  /// Fallback method to get session data from SharedPreferences
+  static Future<Map<String, dynamic>> _getSessionDataFromSharedPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasActiveSession = prefs.getBool('has_active_session') ?? false;
+      final sessionStartTimeMs = prefs.getInt('session_start_time');
+      final currentMinutes = prefs.getInt('current_session_minutes') ?? 0;
+      
+      return {
+        'hasActiveSession': hasActiveSession,
+        'sessionStartTime': sessionStartTimeMs,
+        'currentMinutes': currentMinutes,
+        'todayTotal': 0, // Would need to load from DB
+        'timestamp': DateTime.now().toIso8601String(),
+        'source': 'SharedPreferences',
+      };
+    } catch (e) {
+      return {
+        'hasActiveSession': false,
+        'sessionStartTime': null,
+        'currentMinutes': 0,
+        'todayTotal': 0,
+        'error': e.toString(),
+        'timestamp': DateTime.now().toIso8601String(),
+      };
     }
   }
 
@@ -220,6 +267,7 @@ class PersistentTrackerService {
       Permission.notification,
       Permission.systemAlertWindow, // For screen state detection
       Permission.phone, // For device state monitoring
+      Permission.ignoreBatteryOptimizations, // 🔥 Critical for background survival
     ];
 
     // Request permissions
@@ -232,24 +280,34 @@ class PersistentTrackerService {
 
     if (!allGranted) {
       print('⚠️ Some permissions not granted: $statuses');
+      
+      // Try to request battery optimization bypass again if denied
+      if (statuses[Permission.ignoreBatteryOptimizations] != PermissionStatus.granted) {
+        print('🔋 CRITICAL: Battery optimization bypass denied - app will be killed during sleep!');
+        print('🔋 Please manually enable "Allow background activity" in device settings');
+        
+        // Try one more time with a delay
+        await Future.delayed(const Duration(seconds: 2));
+        final retryResult = await Permission.ignoreBatteryOptimizations.request();
+        if (retryResult == PermissionStatus.granted) {
+          print('✅ Battery optimization bypass granted on retry');
+          allGranted = true;
+        } else {
+          print('❌ Battery optimization bypass still denied - app will not survive background');
+        }
+      }
+    } else {
+      print('✅ All permissions granted');
     }
 
-    // Request battery optimization bypass (Android 6.0+)
+    // Request auto-start permission (for some Android devices)
     try {
-      final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
-      if (batteryStatus != PermissionStatus.granted) {
-        print('🔋 Requesting battery optimization bypass...');
-        final batteryResult = await Permission.ignoreBatteryOptimizations.request();
-        if (batteryResult == PermissionStatus.granted) {
-          print('✅ Battery optimization bypass granted');
-        } else {
-          print('⚠️ Battery optimization bypass denied - app may be killed during sleep');
-        }
-      } else {
-        print('✅ Battery optimization already bypassed');
+      final autoStartStatus = await Permission.ignoreBatteryOptimizations.status;
+      if (autoStartStatus == PermissionStatus.granted) {
+        print('✅ Auto-start permission available');
       }
     } catch (e) {
-      print('⚠️ Could not request battery optimization bypass: $e');
+      print('⚠️ Auto-start permission not available: $e');
     }
 
     return allGranted;
@@ -267,6 +325,22 @@ class PersistentTrackerService {
 
     // Load today's total screen time from database
     await _loadTodayScreenTime(serviceData);
+
+    // Start tracking immediately if screen is currently on
+    // This ensures tracking starts right after login, not waiting for screen events
+    serviceData.screenOnTime = DateTime.now();
+    print('📱 Tracking started immediately at ${serviceData.screenOnTime}');
+
+    // Immediately store session data for dashboard access
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('has_active_session', true);
+      await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
+      await prefs.setInt('current_session_minutes', 0);
+      print('💾 Initial session data stored for dashboard');
+    } catch (e) {
+      print('❌ Error storing initial session data: $e');
+    }
 
     // Update notification with loaded total
     if (service is AndroidServiceInstance) {
@@ -323,6 +397,43 @@ class PersistentTrackerService {
             // Reset start to now for the next chunk
             serviceData.screenOnTime = now;
           }
+          
+          // Check for screen off timeout (1 minute)
+          if (serviceData.screenOffTime != null) {
+            final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
+            if (timeSinceScreenOff >= 1) {
+              print('⏰ Screen OFF timeout: ${timeSinceScreenOff}m since screen off, ending session');
+              serviceData.screenOnTime = null;
+              serviceData.screenOffTime = null;
+              // Clear session data from SharedPreferences
+              try {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('has_active_session', false);
+                await prefs.remove('session_start_time');
+                await prefs.setInt('current_session_minutes', 0);
+                print('🧹 Cleared session data after screen off timeout');
+              } catch (e) {
+                print('❌ Error clearing session data after screen off timeout: $e');
+              }
+            }
+          }
+          
+          // End session after 30 minutes of total inactivity (1800 seconds)
+          if (elapsedSeconds >= 1800) {
+            print('⏰ Session timeout: ${elapsedSeconds}s of inactivity, ending session');
+            serviceData.screenOnTime = null;
+            serviceData.screenOffTime = null;
+            // Clear session data from SharedPreferences
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('has_active_session', false);
+              await prefs.remove('session_start_time');
+              await prefs.setInt('current_session_minutes', 0);
+              print('🧹 Cleared session data after timeout');
+            } catch (e) {
+              print('❌ Error clearing session data after timeout: $e');
+            }
+          }
         }
 
         // Reload today's total from DB (every 5 minutes to reduce DB calls)
@@ -330,16 +441,12 @@ class PersistentTrackerService {
           await _loadTodayScreenTime(serviceData);
         }
 
-        // Compute live display with current session
+        // Compute live display with current session (for dashboard only, not notification)
         int liveExtra = 0;
-        String sessionInfo = '';
         if (serviceData.screenOnTime != null) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
           liveExtra = sessionSeconds ~/ 60; // floor to minutes
-          if (liveExtra > 0) {
-            sessionInfo = ' + ${liveExtra}m active';
-          }
           
           // Store current session info for dashboard access via SharedPreferences
           try {
@@ -363,32 +470,41 @@ class PersistentTrackerService {
           }
         }
 
-        final int displayMinutes = serviceData.todayScreenTime + liveExtra;
-        final int hours = displayMinutes ~/ 60;
-        final int minutes = displayMinutes % 60;
+        // Notification shows only database total (no live session) to match dashboard
+        final int hours = serviceData.todayScreenTime ~/ 60;
+        final int minutes = serviceData.todayScreenTime % 60;
         final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
         
         if (service is AndroidServiceInstance) {
           service.setForegroundNotificationInfo(
             title: 'TRIminder Tracking',
-            content: 'Today: $timeStr$sessionInfo',
+            content: 'Today: $timeStr',
           );
         }
 
         // Check if new day - reset daily counter
         final now = DateTime.now();
         if (now.day != serviceData.lastSaveDate.day) {
-          await _saveDailyData(serviceData.todayScreenTime);
-          serviceData.todayScreenTime = 0;
+          print('📅 New day detected - resetting daily counter');
           serviceData.lastSaveDate = now;
-          print('🗓️ New day detected - reset daily counter');
+          serviceData.todayScreenTime = 0;
+          await _loadTodayScreenTime(serviceData);
         }
 
-        // No cloud sync here: background service is write-only.
-        // Cloud sync will be handled by ImprovedSyncService in foreground.
+        // Auto-restart check (every 10 minutes)
+        if (timer.tick % 10 == 0) {
+          print('🔍 Auto-restart check: Service running for ${timer.tick} minutes');
+          // Keep the service alive by updating notification (simplified)
+          if (service is AndroidServiceInstance) {
+            service.setForegroundNotificationInfo(
+              title: 'TRIminder Tracking',
+              content: 'Today: $timeStr',
+            );
+          }
+        }
 
       } catch (e) {
-        print('❌ Periodic task error: $e');
+        print('❌ Error in periodic task: $e');
       }
     });
 
@@ -449,6 +565,35 @@ class PersistentTrackerService {
           content: 'Today: $timeStr screen time',
         );
         print('📱 Recreated notification');
+      }
+    });
+
+    // Listen for session data request
+    service.on('get_session_data').listen((event) async {
+      print('📊 Session data request received');
+      
+      // Calculate current session minutes
+      int currentMinutes = 0;
+      if (serviceData.screenOnTime != null) {
+        final now = DateTime.now();
+        final sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
+        currentMinutes = sessionSeconds ~/ 60;
+      }
+      
+      // Store session data in SharedPreferences for dashboard access
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('has_active_session', serviceData.screenOnTime != null);
+        if (serviceData.screenOnTime != null) {
+          await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
+          await prefs.setInt('current_session_minutes', currentMinutes);
+        } else {
+          await prefs.remove('session_start_time');
+          await prefs.setInt('current_session_minutes', 0);
+        }
+        print('💾 Updated session data for dashboard: active=${serviceData.screenOnTime != null}, minutes=$currentMinutes');
+      } catch (e) {
+        print('❌ Error updating session data: $e');
       }
     });
   }
@@ -519,8 +664,20 @@ class PersistentTrackerService {
     try {
       switch (event) {
         case ScreenStateEvent.SCREEN_ON:
-          serviceData.screenOnTime = DateTime.now();
-          print('📱 Screen ON at ${serviceData.screenOnTime}');
+          // Clear screen off timeout since user is back
+          if (serviceData.screenOffTime != null) {
+            final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
+            print('📱 Screen ON - user returned after ${timeSinceScreenOff}m, continuing session');
+            serviceData.screenOffTime = null;
+          }
+          
+          // Only start new session if not already tracking
+          if (serviceData.screenOnTime == null) {
+            serviceData.screenOnTime = DateTime.now();
+            print('📱 Screen ON - started new session at ${serviceData.screenOnTime}');
+          } else {
+            print('📱 Screen ON - continuing existing session since ${serviceData.screenOnTime}');
+          }
           break;
           
         case ScreenStateEvent.SCREEN_OFF:
@@ -546,7 +703,10 @@ class PersistentTrackerService {
               );
             }
             
-            serviceData.screenOnTime = null;
+            // Start a timeout timer for screen OFF
+            // If no SCREEN_ON within 1 minute, end the session
+            serviceData.screenOffTime = screenOffTime;
+            print('⏰ Screen OFF timeout started - session will end in 1 minute if no activity');
           }
           break;
           
@@ -556,7 +716,7 @@ class PersistentTrackerService {
             serviceData.screenOnTime = DateTime.now();
             print('📱 Screen unlocked → starting session at ${serviceData.screenOnTime}');
           } else {
-            print('📱 Screen unlocked');
+            print('📱 Screen unlocked - already tracking since ${serviceData.screenOnTime}');
           }
           break;
       }

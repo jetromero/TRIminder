@@ -81,6 +81,23 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     _loadUserData();
     _startAutomaticTracking();
     _startMinuteTimer();
+    _ensureBackgroundServiceRunning();
+  }
+
+  /// Ensure background service is running
+  Future<void> _ensureBackgroundServiceRunning() async {
+    try {
+      final isRunning = await PersistentTrackerService.isRunning();
+      if (!isRunning) {
+        print('⚠️ Background service not running - restarting...');
+        await PersistentTrackerService.startService();
+        print('✅ Background service restarted');
+      } else {
+        print('✅ Background service is running');
+      }
+    } catch (e) {
+      print('❌ Error checking/restarting background service: $e');
+    }
   }
 
   Future<void> _startAutomaticTracking() async {
@@ -128,6 +145,30 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     }
   }
 
+  // Debug method to check and restart background service
+  Future<void> _checkAndRestartService() async {
+    print('🔧 Checking background service status...');
+    final status = await PersistentTrackerService.getServiceStatus();
+    print('📊 Service status: $status');
+    
+    if (status['running'] == false) {
+      print('⚠️ Service not running - attempting restart...');
+      await PersistentTrackerService.startService();
+      print('✅ Service restart attempted');
+    } else {
+      print('✅ Service is running');
+    }
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Service: ${status['running'] ? 'Running' : 'Stopped'}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -137,27 +178,33 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
+    super.didChangeAppLifecycleState(state);
     
     switch (state) {
-      case AppLifecycleState.paused:
-        // App goes to background - just log, don't reset session
-        // The PersistentTrackerService handles actual screen OFF events
-        print('App paused - background service continues tracking');
-        break;
       case AppLifecycleState.resumed:
-        // App comes to foreground - refresh data and sync, but don't restart session
-        // The PersistentTrackerService handles screen ON events
         print('App resumed - refreshing data and syncing');
-        _automaticTracker.checkForEndOfDay();
-        _automaticTracker.refreshTodayData();
+        
+        // Ensure background service is running
+        await _ensureBackgroundServiceRunning();
+        
+        // Refresh data and sync
+        await _automaticTracker.refreshTodayData();
         await ImprovedSyncService().performSync();
-        // Reload background service data to match dashboard
         await PersistentTrackerService.reloadTodayData();
+        
+        if (mounted) setState(() {});
         break;
+        
+      case AppLifecycleState.paused:
+        print('App paused - ensuring background service continues');
+        // Background service should continue running
+        break;
+        
       case AppLifecycleState.detached:
-        // App is being terminated - stop automatic tracking display
-        _automaticTracker.stopMonitoring();
+        print('App detached - background service should continue');
+        // Background service should continue running
         break;
+        
       default:
         break;
     }
@@ -257,15 +304,8 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                   ),
                     _DebugButton(
                       label: 'Check Service',
-              onPressed: () async {
-                        final status = await PersistentTrackerService.getServiceStatus();
-                        print('🔍 Service Status: $status');
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Service: ${status['message'] ?? 'Unknown'}'),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
+                      onPressed: () async {
+                        await _checkAndRestartService();
                       },
                       icon: Icons.engineering,
                     ),

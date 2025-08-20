@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 import '../services/timer_manager.dart';
+import '../services/persistent_tracker_service.dart';
 
 /// Automatic screen time tracker that detects phone screen state
 /// Tracks screen ON/OFF events and calculates daily usage
@@ -110,9 +111,9 @@ class AutomaticScreenTracker extends ChangeNotifier {
     print('Session display refreshed - letting background service handle actual tracking');
   }
 
-  /// Update today's total in real-time (database total + current session)
+  /// Update today's total (database only - no live session)
   void _updateRealTimeTodayTotal() {
-    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
+    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase; // Only database total
     
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
@@ -120,7 +121,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
     
     // Notify listeners since this updates the main display data
-    print('📊 AutomaticScreenTracker: Updating real-time total to ${_todayScreenTimeMinutes}m, notifying listeners');
+    print('📊 AutomaticScreenTracker: Updating total to ${_todayScreenTimeMinutes}m, notifying listeners');
     notifyListeners();
   }
 
@@ -371,32 +372,26 @@ class AutomaticScreenTracker extends ChangeNotifier {
   /// Try to sync current session state from background service
   Future<void> _syncCurrentSessionFromBackground() async {
     try {
-      // Read session data from SharedPreferences (set by background service)
-      final prefs = await SharedPreferences.getInstance();
-      final hasActiveSession = prefs.getBool('has_active_session') ?? false;
+      // Get session data directly from background service
+      final sessionData = await PersistentTrackerService.getCurrentSessionData();
       
-      if (hasActiveSession) {
-        final sessionStartTimeMs = prefs.getInt('session_start_time');
-        final currentMinutes = prefs.getInt('current_session_minutes') ?? 0;
-        
-        print('🔍 Reading session data: hasActiveSession=$hasActiveSession, startTimeMs=$sessionStartTimeMs, currentMinutes=$currentMinutes');
-        
-        if (sessionStartTimeMs != null) {
-          _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
-          _currentSessionMinutes = currentMinutes;
-          print('📱 Found active session: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
-        } else {
-          _currentSessionStart = null;
-          _currentSessionMinutes = 0;
-          print('📱 Session start time is null');
-        }
+      print('🔍 Direct service session data: $sessionData');
+      
+      final hasActiveSession = sessionData['hasActiveSession'] ?? false;
+      final sessionStartTimeMs = sessionData['sessionStartTime'];
+      final currentMinutes = sessionData['currentMinutes'] ?? 0;
+      
+      if (hasActiveSession && sessionStartTimeMs != null) {
+        _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
+        _currentSessionMinutes = currentMinutes;
+        print('📱 Found active session via service: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
       } else {
         _currentSessionStart = null;
         _currentSessionMinutes = 0;
-        print('📱 No active session found (hasActiveSession=false)');
+        print('📱 No active session found via service (hasActiveSession=$hasActiveSession)');
       }
     } catch (e) {
-      print('❌ Error syncing session from background: $e');
+      print('❌ Error syncing session from service: $e');
       _currentSessionStart = null;
       _currentSessionMinutes = 0;
     }
