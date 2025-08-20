@@ -12,6 +12,17 @@
     <!-- For screen state detection -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     
+    <!-- Battery optimization bypass (Android 6.0+) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    
+    <!-- Auto-start permissions for various manufacturers -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUICKBOOT_POWERON" />
+    
+    <!-- Additional background permissions -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    
     <application
         android:label="TRIminder"
         android:name="${applicationName}"

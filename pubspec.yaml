@@ -52,6 +52,9 @@ dependencies:
   # For background services and auto-start
   flutter_background_service: ^5.0.5
   permission_handler: ^11.0.1
+  
+  # For storing preferences
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:

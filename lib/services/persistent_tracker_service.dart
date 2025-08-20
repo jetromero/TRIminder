@@ -123,9 +123,32 @@ class PersistentTrackerService {
         // Send message to background service to reload data
         service.invoke('reload_today_data');
         print('📊 Sent reload command to background service');
+      } else {
+        print('⚠️ Background service is not running!');
       }
     } catch (e) {
       print('❌ Error sending reload command: $e');
+    }
+  }
+
+  /// Check service status and get current data
+  static Future<Map<String, dynamic>> getServiceStatus() async {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (isRunning) {
+        // Send status request to background service
+        service.invoke('get_status');
+        print('📊 Sent status request to background service');
+        return {'running': true, 'message': 'Service is running'};
+      } else {
+        print('⚠️ Background service is not running!');
+        return {'running': false, 'message': 'Service stopped'};
+      }
+    } catch (e) {
+      print('❌ Error checking service status: $e');
+      return {'running': false, 'error': e.toString()};
     }
   }
 
@@ -139,7 +162,7 @@ class PersistentTrackerService {
 
     // Request permissions
     Map<Permission, PermissionStatus> statuses = await permissions.request();
-    
+
     // Check if all required permissions are granted
     bool allGranted = statuses.values.every(
       (status) => status == PermissionStatus.granted
@@ -147,6 +170,24 @@ class PersistentTrackerService {
 
     if (!allGranted) {
       print('⚠️ Some permissions not granted: $statuses');
+    }
+
+    // Request battery optimization bypass (Android 6.0+)
+    try {
+      final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
+      if (batteryStatus != PermissionStatus.granted) {
+        print('🔋 Requesting battery optimization bypass...');
+        final batteryResult = await Permission.ignoreBatteryOptimizations.request();
+        if (batteryResult == PermissionStatus.granted) {
+          print('✅ Battery optimization bypass granted');
+        } else {
+          print('⚠️ Battery optimization bypass denied - app may be killed during sleep');
+        }
+      } else {
+        print('✅ Battery optimization already bypassed');
+      }
+    } catch (e) {
+      print('⚠️ Could not request battery optimization bypass: $e');
     }
 
     return allGranted;
@@ -276,6 +317,29 @@ class PersistentTrackerService {
           title: 'TRIminder Tracking',
           content: 'Today: $timeStr screen time',
         );
+      }
+    });
+
+    // Listen for status request
+    service.on('get_status').listen((event) async {
+      print('📊 Status request received');
+      final hours = serviceData.todayScreenTime ~/ 60;
+      final minutes = serviceData.todayScreenTime % 60;
+      final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+      
+      print('📊 Background Service Status:');
+      print('   - Running: true');
+      print('   - Today screen time: $timeStr (${serviceData.todayScreenTime} minutes)');
+      print('   - Screen on time: ${serviceData.screenOnTime}');
+      print('   - Last save date: ${serviceData.lastSaveDate}');
+      
+      // Recreate notification if it was removed
+      if (service is AndroidServiceInstance) {
+        service.setForegroundNotificationInfo(
+          title: 'TRIminder Tracking',
+          content: 'Today: $timeStr screen time',
+        );
+        print('📱 Recreated notification');
       }
     });
   }

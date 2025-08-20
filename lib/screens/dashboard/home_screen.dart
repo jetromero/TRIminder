@@ -11,6 +11,7 @@ import '../../widgets/automatic_tracker_display.dart';
 import '../../widgets/sync_status_widget.dart';
 import '../../utils/debug_helper.dart';
 import '../../services/persistent_tracker_service.dart';
+import '../../services/first_time_setup_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -161,123 +162,176 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         child: Padding(
           padding: ResponsiveUtils.getCardPadding(context),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Debug Panel', style: Theme.of(context).textTheme.titleMedium),
-              // First row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton(
-                    onPressed: () async {
-                      await DebugHelper.checkAuthStatus();
-                    },
-                    child: const Text('Auth'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      await DebugHelper.checkDatabaseContent();
-                    },
-                    child: const Text('Check DB'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      await DebugHelper.testScreenTimeTracking();
-                    },
-                    child: const Text('Test Track'),
-                  ),
-                ],
+              Text(
+                'Debug Panel', 
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-              // Second row - Session debugging
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton(
-                    onPressed: () async {
-                      await DebugHelper.addTestScreenTimeEntry();
-                      await _automaticTracker.refreshTodayData();
-                      setState(() {}); // Refresh UI
-                    },
-                    child: const Text('Add Test'),
-                  ),
-                              ElevatedButton(
-              onPressed: () async {
-                await DebugHelper.testBidirectionalSync();
-              },
-              child: const Text('Old Sync'),
-            ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      await DebugHelper.checkSessionStatus();
-                    },
-                    child: const Text('Session'),
-                  ),
-                ],
-              ),
-                      SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-        // Third row - Data management
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            ElevatedButton(
-              onPressed: () async {
-                await DebugHelper.saveCurrentSessionManually();
-                await _automaticTracker.refreshTodayData();
-                setState(() {}); // Refresh UI
-              },
-              child: const Text('Save Session'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                // Show confirmation dialog
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Clear All Data'),
-                    content: const Text('This will delete all local data. Are you sure?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        child: const Text('Clear'),
-                      ),
+              SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20)),
+              
+              // Responsive button grid
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isSmallScreen = constraints.maxWidth < 600;
+                  final isMediumScreen = constraints.maxWidth >= 600 && constraints.maxWidth < 900;
+                  
+                  // Determine buttons per row based on screen size
+                  int buttonsPerRow;
+                  if (isSmallScreen) {
+                    buttonsPerRow = 2; // 2 buttons per row on mobile
+                  } else if (isMediumScreen) {
+                    buttonsPerRow = 3; // 3 buttons per row on tablet
+                  } else {
+                    buttonsPerRow = 4; // 4 buttons per row on desktop
+                  }
+                  
+                  // Define all debug buttons
+                  final debugButtons = [
+                    _DebugButton(
+                      label: 'Auth',
+                      onPressed: () async => await DebugHelper.checkAuthStatus(),
+                      icon: Icons.security,
+                    ),
+                    _DebugButton(
+                      label: 'Check DB',
+                      onPressed: () async => await DebugHelper.checkDatabaseContent(),
+                      icon: Icons.storage,
+                    ),
+                    _DebugButton(
+                      label: 'Test Track',
+                      onPressed: () async => await DebugHelper.testScreenTimeTracking(),
+                      icon: Icons.track_changes,
+                    ),
+                    _DebugButton(
+                      label: 'Add Test',
+                      onPressed: () async {
+                        await DebugHelper.addTestScreenTimeEntry();
+                        await _automaticTracker.refreshTodayData();
+                        setState(() {});
+                      },
+                      icon: Icons.add,
+                    ),
+                    _DebugButton(
+                      label: 'Check Service',
+                      onPressed: () async {
+                        final status = await PersistentTrackerService.getServiceStatus();
+                        print('🔍 Service Status: $status');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Service: ${status['message'] ?? 'Unknown'}'),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      },
+                      icon: Icons.engineering,
+                    ),
+                    _DebugButton(
+                      label: 'Check Setup',
+                      onPressed: () async {
+                        final setupStatus = await FirstTimeSetupService.checkSetupStatus();
+                        print('🔧 Setup Status: $setupStatus');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Setup: ${setupStatus['backgroundConfigured'] ? 'Configured' : 'Needs Setup'}'),
+                            duration: const Duration(seconds: 3),
+                          ),
+                        );
+                      },
+                      icon: Icons.settings,
+                    ),
+                    _DebugButton(
+                      label: 'Old Sync',
+                      onPressed: () async => await DebugHelper.testBidirectionalSync(),
+                      icon: Icons.sync,
+                    ),
+                                         _DebugButton(
+                       label: 'Session',
+                       onPressed: () async => await DebugHelper.checkSessionStatus(),
+                       icon: Icons.access_time,
+                     ),
+                    _DebugButton(
+                      label: 'Save Session',
+                      onPressed: () async {
+                        await DebugHelper.saveCurrentSessionManually();
+                        await _automaticTracker.refreshTodayData();
+                        setState(() {});
+                      },
+                      icon: Icons.save,
+                    ),
+                    _DebugButton(
+                      label: 'Clear Data',
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Clear All Data'),
+                            content: const Text('This will delete all local data. Are you sure?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(context).pop(true),
+                                child: const Text('Clear'),
+                              ),
+                            ],
+                          ),
+                        );
+                        
+                        if (confirmed == true) {
+                          await DebugHelper.clearAllLocalData();
+                          setState(() {});
+                        }
+                      },
+                      icon: Icons.delete_forever,
+                      isDestructive: true,
+                    ),
+                    _DebugButton(
+                      label: 'New Sync',
+                      onPressed: () async => await DebugHelper.testImprovedSync(),
+                      icon: Icons.cloud_sync,
+                    ),
+                    _DebugButton(
+                      label: 'Compare',
+                      onPressed: () async => await DebugHelper.compareSyncMethods(),
+                      icon: Icons.compare_arrows,
+                    ),
+                  ];
+                  
+                  // Create responsive grid
+                  return Column(
+                    children: [
+                      for (int i = 0; i < debugButtons.length; i += buttonsPerRow)
+                        Padding(
+                          padding: EdgeInsets.only(
+                            bottom: i + buttonsPerRow < debugButtons.length 
+                              ? ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)
+                              : 0,
+                          ),
+                          child: Row(
+                            children: [
+                              for (int j = 0; j < buttonsPerRow && i + j < debugButtons.length; j++)
+                                Expanded(
+                                  child: Padding(
+                                    padding: EdgeInsets.only(
+                                      right: j < buttonsPerRow - 1 && i + j + 1 < debugButtons.length
+                                        ? ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)
+                                        : 0,
+                                    ),
+                                    child: debugButtons[i + j],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
                     ],
-                  ),
-                );
-                
-                if (confirmed == true) {
-                  await DebugHelper.clearAllLocalData();
-                  setState(() {}); // Refresh UI
-                }
-              },
-              child: const Text('Clear Data'),
-            ),
-            const Expanded(child: SizedBox()), // Spacer
-          ],
-        ),
-        SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-        // Fourth row - Sync testing
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            ElevatedButton(
-              onPressed: () async {
-                await DebugHelper.testImprovedSync();
-              },
-              child: const Text('New Sync'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                await DebugHelper.compareSyncMethods();
-              },
-              child: const Text('Compare'),
-            ),
-            const Expanded(child: SizedBox()), // Spacer
-          ],
-        ),
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -730,6 +784,56 @@ class _ProfileTabState extends State<ProfileTab> {
         child: Text(
           'Profile Coming Soon!',
           style: TextStyle(fontSize: 18),
+        ),
+      ),
+    );
+  }
+}
+
+/// Custom debug button widget with icon and responsive design
+class _DebugButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onPressed;
+  final IconData icon;
+  final bool isDestructive;
+
+  const _DebugButton({
+    required this.label,
+    required this.onPressed,
+    required this.icon,
+    this.isDestructive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+    
+    return SizedBox(
+      height: 40 + (fontScale - 1) * 8, // Responsive height
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(
+          icon,
+          size: ResponsiveUtils.getIconSize(context, mobile: 16, tablet: 18, desktop: 20),
+        ),
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12 * fontScale,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isDestructive 
+            ? Colors.red.shade100 
+            : Theme.of(context).colorScheme.primaryContainer,
+          foregroundColor: isDestructive 
+            ? Colors.red.shade700 
+            : Theme.of(context).colorScheme.onPrimaryContainer,
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
         ),
       ),
     );
