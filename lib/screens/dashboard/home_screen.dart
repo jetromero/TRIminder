@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../auth/login_screen.dart';
 import '../../services/supabase_service.dart';
 import '../../services/automatic_screen_tracker.dart';
@@ -70,6 +71,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   UserProfile? userProfile;
   bool isLoading = true;
   late AutomaticScreenTracker _automaticTracker;
+  Timer? _minuteTimer;
 
   @override
   void initState() {
@@ -78,6 +80,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     _automaticTracker = AutomaticScreenTracker();
     _loadUserData();
     _startAutomaticTracking();
+    _startMinuteTimer();
   }
 
   Future<void> _startAutomaticTracking() async {
@@ -88,9 +91,47 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     }
   }
 
+  void _startMinuteTimer() {
+    // Align first tick to the next minute boundary
+    final now = DateTime.now();
+    final int secondsUntilNextMinute = 60 - now.second;
+    print('⏰ Starting minute timer - will tick in ${secondsUntilNextMinute} seconds (at ${now.add(Duration(seconds: secondsUntilNextMinute)).toLocal()})');
+    Future.delayed(Duration(seconds: secondsUntilNextMinute), () {
+      print('⏰ First minute tick triggered');
+      _onMinuteTick();
+      _minuteTimer?.cancel();
+      _minuteTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+        print('⏰ Periodic minute tick triggered');
+        _onMinuteTick();
+      });
+    });
+  }
+
+  Future<void> _onMinuteTick() async {
+    print('⏰ Dashboard minute tick - refreshing data');
+    _automaticTracker.checkForEndOfDay();
+    await _automaticTracker.refreshTodayData();
+    await PersistentTrackerService.reloadTodayData();
+    if (mounted) {
+      setState(() {});
+      print('🔄 Dashboard UI updated');
+    }
+  }
+
+  // Manual refresh method for debugging
+  Future<void> _manualRefresh() async {
+    print('🔄 Manual refresh triggered');
+    await _automaticTracker.refreshTodayData();
+    if (mounted) {
+      setState(() {});
+      print('🔄 Manual refresh completed');
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _minuteTimer?.cancel();
     super.dispose();
   }
 
@@ -207,16 +248,16 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                     ),
                     _DebugButton(
                       label: 'Add Test',
-                      onPressed: () async {
-                        await DebugHelper.addTestScreenTimeEntry();
-                        await _automaticTracker.refreshTodayData();
+                    onPressed: () async {
+                      await DebugHelper.addTestScreenTimeEntry();
+                      await _automaticTracker.refreshTodayData();
                         setState(() {});
-                      },
+                    },
                       icon: Icons.add,
-                    ),
+                  ),
                     _DebugButton(
                       label: 'Check Service',
-                      onPressed: () async {
+              onPressed: () async {
                         final status = await PersistentTrackerService.getServiceStatus();
                         print('🔍 Service Status: $status');
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -228,20 +269,33 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                       },
                       icon: Icons.engineering,
                     ),
-                    _DebugButton(
-                      label: 'Check Setup',
-                      onPressed: () async {
-                        final setupStatus = await FirstTimeSetupService.checkSetupStatus();
-                        print('🔧 Setup Status: $setupStatus');
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Setup: ${setupStatus['backgroundConfigured'] ? 'Configured' : 'Needs Setup'}'),
-                            duration: const Duration(seconds: 3),
-                          ),
-                        );
-                      },
-                      icon: Icons.settings,
-                    ),
+                                                    _DebugButton(
+                                  label: 'Check Setup',
+                                  onPressed: () async {
+                                    final setupStatus = await FirstTimeSetupService.checkSetupStatus();
+                                    print('🔧 Setup Status: $setupStatus');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Setup: ${setupStatus['backgroundConfigured'] ? 'Configured' : 'Needs Setup'}'),
+                                        duration: const Duration(seconds: 3),
+                                      ),
+                                    );
+                                  },
+                                  icon: Icons.settings,
+                                ),
+                                _DebugButton(
+                                  label: 'Manual Refresh',
+                                  onPressed: () async {
+                                    await _manualRefresh();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Manual refresh completed'),
+                                        duration: const Duration(seconds: 2),
+                                      ),
+                                    );
+                                  },
+                                  icon: Icons.refresh,
+                                ),
                     _DebugButton(
                       label: 'Old Sync',
                       onPressed: () async => await DebugHelper.testBidirectionalSync(),
@@ -254,36 +308,36 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                      ),
                     _DebugButton(
                       label: 'Save Session',
-                      onPressed: () async {
-                        await DebugHelper.saveCurrentSessionManually();
-                        await _automaticTracker.refreshTodayData();
+              onPressed: () async {
+                await DebugHelper.saveCurrentSessionManually();
+                await _automaticTracker.refreshTodayData();
                         setState(() {});
-                      },
+              },
                       icon: Icons.save,
-                    ),
+            ),
                     _DebugButton(
                       label: 'Clear Data',
-                      onPressed: () async {
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Clear All Data'),
-                            content: const Text('This will delete all local data. Are you sure?'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(false),
-                                child: const Text('Cancel'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(true),
-                                child: const Text('Clear'),
-                              ),
-                            ],
-                          ),
-                        );
-                        
-                        if (confirmed == true) {
-                          await DebugHelper.clearAllLocalData();
+              onPressed: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Clear All Data'),
+                    content: const Text('This will delete all local data. Are you sure?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: const Text('Clear'),
+                      ),
+                    ],
+                  ),
+                );
+                
+                if (confirmed == true) {
+                  await DebugHelper.clearAllLocalData();
                           setState(() {});
                         }
                       },
@@ -313,7 +367,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                               : 0,
                           ),
                           child: Row(
-                            children: [
+          children: [
                               for (int j = 0; j < buttonsPerRow && i + j < debugButtons.length; j++)
                                 Expanded(
                                   child: Padding(
@@ -331,7 +385,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                     ],
                   );
                 },
-              ),
+        ),
             ],
           ),
         ),

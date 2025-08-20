@@ -13,6 +13,7 @@ class AutomaticTrackerDisplay extends StatefulWidget {
 
 class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
   late AutomaticScreenTracker _tracker;
+  DateTime _lastUpdate = DateTime.now();
 
   @override
   void initState() {
@@ -30,6 +31,8 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
 
   void _onTrackerUpdate() {
     if (mounted) {
+      _lastUpdate = DateTime.now();
+      print('🔄 AutomaticTrackerDisplay: Listener triggered, updating UI at ${_lastUpdate.toLocal()}');
       setState(() {});
     }
   }
@@ -108,6 +111,7 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
               ],
             ),
             SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
 
             // Today's Screen Time - Responsive layout
             context.isMobile 
@@ -351,6 +355,28 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
             fontSize: (Theme.of(context).textTheme.headlineSmall?.fontSize ?? 24) * fontScale,
           ),
         ),
+        // Live session indicator
+        if (_tracker.currentSessionMinutes > 0) ...[
+          SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: ResponsiveUtils.getSpacing(context, mobile: 6, tablet: 8, desktop: 10),
+              vertical: ResponsiveUtils.getSpacing(context, mobile: 2, tablet: 4, desktop: 6),
+            ),
+            decoration: BoxDecoration(
+              color: Colors.green.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              '+ ${_tracker.currentSession} active',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.green.shade700,
+                fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

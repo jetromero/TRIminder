@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 import '../services/timer_manager.dart';
@@ -116,6 +117,10 @@ class AutomaticScreenTracker extends ChangeNotifier {
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
     _wellnessRating = _getWellnessRating(_todayScreenTimeMinutes);
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
+    
+    // Notify listeners since this updates the main display data
+    print('📊 AutomaticScreenTracker: Updating real-time total to ${_todayScreenTimeMinutes}m, notifying listeners');
+    notifyListeners();
   }
 
   /// Update daily statistics display only (no XP award)
@@ -129,6 +134,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Check for badges
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
     
+    print('📊 AutomaticScreenTracker: Notifying listeners of data update');
     notifyListeners();
   }
 
@@ -255,7 +261,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     List<String> badges = [];
     
     if (totalMinutes <= 60) {
-      badges.add('Digital Monk'); // Ultra minimal
+      badges.add('Digital Sage'); // Ultra minimal
     } 
     else if (totalMinutes <= 120) {
       badges.add('Mindful Master'); // Excellent
@@ -335,7 +341,9 @@ class AutomaticScreenTracker extends ChangeNotifier {
       _updateRealTimeTodayTotal();
 
       print('Database screen time for today: $_todayScreenTimeFromDatabase minutes');
+      print('Current session minutes: $_currentSessionMinutes minutes');
       print('Real-time total screen time: $_todayScreenTimeMinutes minutes (including current session)');
+      print('Formatted display: ${_formatDuration(_todayScreenTimeMinutes)}');
 
       await _updateDailyStatsDisplay();
 
@@ -346,7 +354,60 @@ class AutomaticScreenTracker extends ChangeNotifier {
 
   /// Refresh today's data (call periodically to sync with background service)
   Future<void> refreshTodayData() async {
+    print('🔄 AutomaticScreenTracker: refreshTodayData() called');
     await _loadTodayData();
+    
+    // Try to get current session state from background service
+    await _syncCurrentSessionFromBackground();
+    
+    // Update the total to show database + live session
+    _updateRealTimeTodayTotal();
+    
+    print('🔄 AutomaticScreenTracker: refreshTodayData() completed, notifying listeners');
+    notifyListeners();
+  }
+
+  /// Try to sync current session state from background service
+  Future<void> _syncCurrentSessionFromBackground() async {
+    try {
+      // Send request to background service to get current session state
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (isRunning) {
+        // Request current session state from background service
+        service.invoke('get_current_session');
+        
+        // For now, we'll estimate based on screen state
+        // In a full implementation, the background service would respond with session data
+        _currentSessionStart = null; // Would be set by background service response
+        _currentSessionMinutes = 0;  // Would be calculated from background service
+        
+        // TODO: Implement proper response handling from background service
+        // This would require adding a listener for 'current_session_response' events
+      } else {
+        _currentSessionStart = null;
+        _currentSessionMinutes = 0;
+      }
+    } catch (e) {
+      print('❌ Error syncing session from background: $e');
+      _currentSessionStart = null;
+      _currentSessionMinutes = 0;
+    }
+  }
+
+  /// Sync current session state from background service
+  void syncCurrentSessionState(DateTime? sessionStartTime) {
+    if (sessionStartTime != null) {
+      _currentSessionStart = sessionStartTime;
+      final now = DateTime.now();
+      _currentSessionMinutes = now.difference(sessionStartTime).inMinutes;
+      _updateRealTimeTodayTotal();
+    } else {
+      _currentSessionStart = null;
+      _currentSessionMinutes = 0;
+      _updateRealTimeTodayTotal();
+    }
   }
 
   /// Format duration in minutes

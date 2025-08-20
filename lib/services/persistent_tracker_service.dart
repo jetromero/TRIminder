@@ -21,7 +21,46 @@ class _ServiceData {
 /// Survives app closure, phone restarts, and system termination
 @pragma('vm:entry-point')
 class PersistentTrackerService {
+  static const int _minSessionSeconds = 20;
 
+  static int _roundSecondsToMinutesNearest(int seconds) {
+    final int minutes = ((seconds + 30) / 60).floor();
+    return minutes < 1 ? 1 : minutes;
+  }
+
+  static Future<int> _saveSessionRounded(DateTime start, DateTime end) async {
+    final int seconds = end.difference(start).inSeconds;
+    if (seconds < _minSessionSeconds) {
+      print('🪙 Session below threshold (${seconds}s < ${_minSessionSeconds}s) - skipped');
+      return 0;
+    }
+    final int minutes = _roundSecondsToMinutesNearest(seconds);
+    if (minutes > 0) {
+      await _saveSession(start, end, minutes);
+      print('💾 Saved session: ${minutes}m (${seconds}s)');
+    } else {
+      print('⚠️ Session too short after rounding (${seconds}s) - skipped');
+    }
+    return minutes;
+  }
+
+  static Future<int> _savePossiblySplitSession(DateTime start, DateTime end) async {
+    if (start.isAfter(end)) return 0;
+    int totalMinutes = 0;
+    DateTime cursorStart = start;
+    final bool sameDay = start.year == end.year && start.month == end.month && start.day == end.day;
+    if (sameDay) {
+      totalMinutes += await _saveSessionRounded(start, end);
+    } else {
+      while (!(cursorStart.year == end.year && cursorStart.month == end.month && cursorStart.day == end.day)) {
+        final DateTime dayEnd = DateTime(cursorStart.year, cursorStart.month, cursorStart.day).add(const Duration(days: 1));
+        totalMinutes += await _saveSessionRounded(cursorStart, dayEnd);
+        cursorStart = dayEnd;
+      }
+      totalMinutes += await _saveSessionRounded(cursorStart, end);
+    }
+    return totalMinutes;
+  }
   static bool _isInitialized = false;
 
   /// Initialize the persistent background service
@@ -152,6 +191,28 @@ class PersistentTrackerService {
     }
   }
 
+  /// Get current session state from background service
+  static Future<DateTime?> getCurrentSessionStartTime() async {
+    try {
+      final service = FlutterBackgroundService();
+      final isRunning = await service.isRunning();
+      
+      if (isRunning) {
+        // Send session state request to background service
+        service.invoke('get_session_state');
+        print('📱 Sent session state request to background service');
+        // Note: This would need to be implemented in the background service
+        // For now, return null as the background service doesn't expose this
+        return null;
+      } else {
+        return null;
+      }
+    } catch (e) {
+      print('❌ Error getting session state: $e');
+      return null;
+    }
+  }
+
   /// Request necessary permissions for background operation
   static Future<bool> _requestPermissions() async {
     final permissions = [
@@ -248,21 +309,47 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 5 minutes)
-    Timer.periodic(const Duration(minutes: 5), (timer) async {
+    // Periodic tasks (every 1 minute)
+    Timer.periodic(const Duration(minutes: 1), (timer) async {
       try {
-        // Reload today's data to stay in sync with dashboard
-        await _loadTodayScreenTime(serviceData);
-        
-        // Update notification with current stats
-        final hours = serviceData.todayScreenTime ~/ 60;
-        final minutes = serviceData.todayScreenTime % 60;
-        final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+        // Checkpoint save for long-running sessions (every ~5 minutes for production)
+        if (serviceData.screenOnTime != null) {
+          final DateTime now = DateTime.now();
+          final int elapsedSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
+          if (elapsedSeconds >= 300) { // 5 minutes
+            final int saved = await _savePossiblySplitSession(serviceData.screenOnTime!, now);
+            print('⏱️ Checkpoint: active ${elapsedSeconds}s → saved ${saved}m, resetting start');
+            // Reset start to now for the next chunk
+            serviceData.screenOnTime = now;
+          }
+        }
+
+        // Reload today's total from DB (every 5 minutes to reduce DB calls)
+        if (timer.tick % 5 == 0) {
+          await _loadTodayScreenTime(serviceData);
+        }
+
+        // Compute live display with current session
+        int liveExtra = 0;
+        String sessionInfo = '';
+        if (serviceData.screenOnTime != null) {
+          final DateTime now = DateTime.now();
+          final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
+          liveExtra = sessionSeconds ~/ 60; // floor to minutes
+          if (liveExtra > 0) {
+            sessionInfo = ' + ${liveExtra}m active';
+          }
+        }
+
+        final int displayMinutes = serviceData.todayScreenTime + liveExtra;
+        final int hours = displayMinutes ~/ 60;
+        final int minutes = displayMinutes % 60;
+        final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
         
         if (service is AndroidServiceInstance) {
           service.setForegroundNotificationInfo(
             title: 'TRIminder Tracking',
-            content: 'Today: $timeStr screen time',
+            content: 'Today: $timeStr$sessionInfo',
           );
         }
 
@@ -383,22 +470,16 @@ class PersistentTrackerService {
       final db = DatabaseService();
       final todayLogs = await db.getScreenTimeEntriesForDateRange(userId, todayStart, todayEnd);
       
-      print('🔍 Background service debug:');
-      print('   - User ID: $userId');
-      print('   - Date range: ${todayStart.toIso8601String()} to ${todayEnd.toIso8601String()}');
-      print('   - Found ${todayLogs.length} logs');
-      
       // Calculate total minutes for today
       int totalMinutes = 0;
       for (final log in todayLogs) {
         if (log.durationMinutes != null) {
           totalMinutes += log.durationMinutes!;
-          print('   - Log: ${log.durationMinutes}m at ${log.startTime}');
         }
       }
 
       serviceData.todayScreenTime = totalMinutes;
-      print('📊 Loaded today\'s screen time from database: ${totalMinutes} minutes');
+      print('📊 Today\'s total: ${totalMinutes}m (${todayLogs.length} sessions)');
       
     } catch (e) {
       print('❌ Error loading today\'s screen time: $e');
@@ -422,27 +503,25 @@ class PersistentTrackerService {
           
         case ScreenStateEvent.SCREEN_OFF:
           if (serviceData.screenOnTime != null) {
-            final screenOffTime = DateTime.now();
-            final sessionSeconds = screenOffTime.difference(serviceData.screenOnTime!).inSeconds;
-            final sessionMinutes = (sessionSeconds / 60).ceil(); // count short sessions as 1 minute
-            
-            if (sessionSeconds > 0) {
-              // Save session
-              await _saveSession(serviceData.screenOnTime!, screenOffTime, sessionMinutes);
-              serviceData.todayScreenTime += sessionMinutes;
-              
-              print('📱 Screen OFF - Session: ${sessionMinutes}m (${sessionSeconds}s) (Total: ${serviceData.todayScreenTime}m)');
-              
-              // Update notification to reflect new daily total immediately
-              if (service is AndroidServiceInstance) {
-                final hours = serviceData.todayScreenTime ~/ 60;
-                final minutes = serviceData.todayScreenTime % 60;
-                final totalStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-                service.setForegroundNotificationInfo(
-                  title: 'TRIminder Tracking',
-                  content: 'Today: $totalStr (last: ${sessionMinutes}m)',
-                );
-              }
+            final DateTime screenOffTime = DateTime.now();
+            final DateTime start = serviceData.screenOnTime!;
+            final int sessionSeconds = screenOffTime.difference(start).inSeconds;
+
+            final int savedMinutes = await _savePossiblySplitSession(start, screenOffTime);
+            print('📱 Screen OFF - Session: ${sessionSeconds}s → saved ${savedMinutes}m');
+
+            // Reload today's total from DB to ensure consistency
+            await _loadTodayScreenTime(serviceData);
+
+            // Update notification using DB-backed total
+            if (service is AndroidServiceInstance) {
+              final int hours = serviceData.todayScreenTime ~/ 60;
+              final int minutes = serviceData.todayScreenTime % 60;
+              final String totalStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+              service.setForegroundNotificationInfo(
+                title: 'TRIminder Tracking',
+                content: 'Today: $totalStr screen time',
+              );
             }
             
             serviceData.screenOnTime = null;
