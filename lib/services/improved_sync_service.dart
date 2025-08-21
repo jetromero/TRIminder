@@ -21,6 +21,9 @@ class ImprovedSyncService extends ChangeNotifier {
   int _syncAttempts = 0;
   List<String> _syncErrors = [];
 
+  // Sync completion callback
+  Function()? _onSyncComplete;
+
   // Sync configuration
   static const Duration _syncInterval = Duration(minutes: 5);
   static const int _maxRetryAttempts = 3;
@@ -33,6 +36,16 @@ class ImprovedSyncService extends ChangeNotifier {
   DateTime? get lastCloudSync => _lastCloudSync;
   int get syncAttempts => _syncAttempts;
   List<String> get syncErrors => List.unmodifiable(_syncErrors);
+
+  /// Set callback for sync completion
+  void setSyncCompleteCallback(Function() callback) {
+    _onSyncComplete = callback;
+  }
+
+  /// Clear sync completion callback
+  void clearSyncCompleteCallback() {
+    _onSyncComplete = null;
+  }
 
   /// Initialize the sync service
   Future<void> initialize() async {
@@ -152,6 +165,16 @@ class ImprovedSyncService extends ChangeNotifier {
         _syncAttempts = 0;
         _syncErrors.clear();
         await _saveSyncMetadata();
+        
+        // Trigger sync completion callback
+        if (_onSyncComplete != null) {
+          try {
+            _onSyncComplete!();
+            AppLogger.debug('Sync completion callback triggered', 'callback');
+          } catch (e) {
+            AppLogger.warning('Error in sync completion callback: $e', 'callback');
+          }
+        }
         
         if (isInitialLogin) {
           AppLogger.success('Smart initial sync completed at $_lastSuccessfulSync', 'login');

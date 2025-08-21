@@ -243,21 +243,5 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
     );
   }
 
-  String _getMotivationalMessage() {
-    final minutes = _tracker.todayScreenTimeMinutes;
-    
-    if (minutes <= 60) {
-      return 'Amazing! You\'re maintaining excellent digital wellness today! 🏆';
-    } else if (minutes <= 120) {
-      return 'Great job! You\'re keeping your screen time balanced. 🥇';
-    } else if (minutes <= 180) {
-      return 'Good progress! Consider taking more breaks from screens. 🥈';
-    } else if (minutes <= 240) {
-      return 'Try to reduce screen time for better digital wellness. 🥉';
-    } else if (minutes <= 360) {
-      return 'High screen time detected. Take regular breaks! ⚠️';
-    } else {
-      return 'Consider a digital detox - your wellness matters! 🚨';
-    }
-  }
+
 }

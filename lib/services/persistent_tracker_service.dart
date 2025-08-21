@@ -212,18 +212,11 @@ class PersistentTrackerService {
       // Trigger session data update in background service
       service.invoke('get_session_data');
       
-      // Wait longer for the background service to update SharedPreferences
-      await Future.delayed(const Duration(milliseconds: 300));
+      // Wait for the background service to update SharedPreferences
+      await Future.delayed(const Duration(milliseconds: 100));
       
-      // Get the updated data from SharedPreferences with retry logic
+      // Get the updated data from SharedPreferences
       Map<String, dynamic> sessionData = await _getSessionDataFromSharedPreferences();
-      
-      // If we got stale data (0 minutes but service says active), retry once
-      if (sessionData['hasActiveSession'] == true && sessionData['currentMinutes'] == 0) {
-        print('🔄 Retrying session data fetch due to stale data');
-        await Future.delayed(const Duration(milliseconds: 200));
-        sessionData = await _getSessionDataFromSharedPreferences();
-      }
       
       return sessionData;
     } catch (e) {
@@ -272,7 +265,7 @@ class PersistentTrackerService {
 
     // Request permissions
     Map<Permission, PermissionStatus> statuses = await permissions.request();
-
+    
     // Check if all required permissions are granted
     bool allGranted = statuses.values.every(
       (status) => status == PermissionStatus.granted
@@ -384,10 +377,10 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 1 minute)
-    Timer.periodic(const Duration(minutes: 1), (timer) async {
+    // Periodic tasks (every 5 minutes)
+    Timer.periodic(const Duration(minutes: 5), (timer) async {
       try {
-        // Checkpoint save for long-running sessions (every ~5 minutes for production)
+        // Checkpoint save for long-running sessions (every 5 minutes)
         if (serviceData.screenOnTime != null) {
           final DateTime now = DateTime.now();
           final int elapsedSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
@@ -436,10 +429,8 @@ class PersistentTrackerService {
           }
         }
 
-        // Reload today's total from DB (every 5 minutes to reduce DB calls)
-        if (timer.tick % 5 == 0) {
-          await _loadTodayScreenTime(serviceData);
-        }
+        // Reload today's total from DB (every tick since we're now on 5-minute intervals)
+        await _loadTodayScreenTime(serviceData);
 
         // Compute live display with current session (for dashboard only, not notification)
         int liveExtra = 0;
@@ -449,25 +440,10 @@ class PersistentTrackerService {
           liveExtra = sessionSeconds ~/ 60; // floor to minutes
           
           // Store current session info for dashboard access via SharedPreferences
-          try {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('has_active_session', true);
-            await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
-            await prefs.setInt('current_session_minutes', liveExtra);
-            print('💾 Stored session data: active=true, start=${serviceData.screenOnTime!.toLocal()}, minutes=$liveExtra');
-          } catch (e) {
-            print('❌ Error storing session data: $e');
-          }
+          await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, liveExtra);
         } else {
           // No active session
-          try {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('has_active_session', false);
-            await prefs.remove('session_start_time');
-            await prefs.setInt('current_session_minutes', 0);
-          } catch (e) {
-            print('❌ Error clearing session data: $e');
-          }
+          await _updateSessionDataInSharedPreferences(false, null, 0);
         }
 
         // Notification shows only database total (no live session) to match dashboard
@@ -491,9 +467,9 @@ class PersistentTrackerService {
           await _loadTodayScreenTime(serviceData);
         }
 
-        // Auto-restart check (every 10 minutes)
-        if (timer.tick % 10 == 0) {
-          print('🔍 Auto-restart check: Service running for ${timer.tick} minutes');
+        // Auto-restart check (every 10 minutes = every 2 ticks)
+        if (timer.tick % 2 == 0) {
+          print('🔍 Auto-restart check: Service running for ${timer.tick * 5} minutes');
           // Keep the service alive by updating notification (simplified)
           if (service is AndroidServiceInstance) {
             service.setForegroundNotificationInfo(
@@ -580,20 +556,27 @@ class PersistentTrackerService {
         currentMinutes = sessionSeconds ~/ 60;
       }
       
-      // Store session data in SharedPreferences for dashboard access
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('has_active_session', serviceData.screenOnTime != null);
-        if (serviceData.screenOnTime != null) {
-          await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
-          await prefs.setInt('current_session_minutes', currentMinutes);
-        } else {
-          await prefs.remove('session_start_time');
-          await prefs.setInt('current_session_minutes', 0);
-        }
-        print('💾 Updated session data for dashboard: active=${serviceData.screenOnTime != null}, minutes=$currentMinutes');
-      } catch (e) {
-        print('❌ Error updating session data: $e');
+      // Update session data in SharedPreferences using consolidated method
+      await _updateSessionDataInSharedPreferences(
+        serviceData.screenOnTime != null,
+        serviceData.screenOnTime,
+        currentMinutes,
+      );
+    });
+
+    // Listen for notification update request (after sync)
+    service.on('update_notification').listen((event) async {
+      print('📱 Notification update request received');
+      
+      final title = event?['title'] ?? 'TRIminder Tracking';
+      final content = event?['content'] ?? 'Today: 0m';
+      
+      if (service is AndroidServiceInstance) {
+        service.setForegroundNotificationInfo(
+          title: title,
+          content: content,
+        );
+        print('📱 Notification updated: $title - $content');
       }
     });
   }
@@ -673,7 +656,7 @@ class PersistentTrackerService {
           
           // Only start new session if not already tracking
           if (serviceData.screenOnTime == null) {
-            serviceData.screenOnTime = DateTime.now();
+          serviceData.screenOnTime = DateTime.now();
             print('📱 Screen ON - started new session at ${serviceData.screenOnTime}');
           } else {
             print('📱 Screen ON - continuing existing session since ${serviceData.screenOnTime}');
@@ -689,18 +672,22 @@ class PersistentTrackerService {
             final int savedMinutes = await _savePossiblySplitSession(start, screenOffTime);
             print('📱 Screen OFF - Session: ${sessionSeconds}s → saved ${savedMinutes}m');
 
+            // Reset the session store after saving to prevent duplicates
+            serviceData.screenOnTime = null;
+            print('🔄 Session store reset after screen OFF save');
+
             // Reload today's total from DB to ensure consistency
             await _loadTodayScreenTime(serviceData);
 
             // Update notification using DB-backed total
-            if (service is AndroidServiceInstance) {
+              if (service is AndroidServiceInstance) {
               final int hours = serviceData.todayScreenTime ~/ 60;
               final int minutes = serviceData.todayScreenTime % 60;
               final String totalStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-              service.setForegroundNotificationInfo(
-                title: 'TRIminder Tracking',
+                service.setForegroundNotificationInfo(
+                  title: 'TRIminder Tracking',
                 content: 'Today: $totalStr screen time',
-              );
+                );
             }
             
             // Start a timeout timer for screen OFF
@@ -738,7 +725,7 @@ class PersistentTrackerService {
       }
 
       // Fallback: use persisted last logged-in user id
-      if (userId == null || userId.isEmpty) {
+        if (userId == null || userId.isEmpty) {
         try {
           final db = DatabaseService();
           final persisted = await db.getSyncMetadata('current_user_id');
@@ -825,5 +812,52 @@ class PersistentTrackerService {
   static Future<bool> _onIosBackground(ServiceInstance service) async {
     print('📱 iOS background mode activated');
     return true;
+  }
+
+  /// Force refresh notification after sync completion
+  static Future<void> refreshNotificationAfterSync() async {
+    try {
+      print('🔄 Refreshing notification after sync completion');
+      
+      // Reload today's data from database
+      final serviceData = _ServiceData();
+      await _loadTodayScreenTime(serviceData);
+      
+      // Update notification with fresh data
+      final int hours = serviceData.todayScreenTime ~/ 60;
+      final int minutes = serviceData.todayScreenTime % 60;
+      final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+      
+      // Send event to background service to update notification
+      FlutterBackgroundService().invoke('update_notification', {
+        'title': 'TRIminder Tracking',
+        'content': 'Today: $timeStr',
+      });
+      
+      print('📱 Notification refresh event sent after sync: $timeStr');
+    } catch (e) {
+      print('❌ Error refreshing notification after sync: $e');
+    }
+  }
+
+  /// Update session data in SharedPreferences
+  static Future<void> _updateSessionDataInSharedPreferences(
+    bool hasActiveSession,
+    DateTime? sessionStartTime,
+    int currentMinutes,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('has_active_session', hasActiveSession);
+      if (sessionStartTime != null) {
+        await prefs.setInt('session_start_time', sessionStartTime.millisecondsSinceEpoch);
+      } else {
+        await prefs.remove('session_start_time');
+      }
+      await prefs.setInt('current_session_minutes', currentMinutes);
+      print('💾 Updated session data in SharedPreferences: active=$hasActiveSession, start=${sessionStartTime?.toLocal()}, minutes=$currentMinutes');
+    } catch (e) {
+      print('❌ Error updating session data in SharedPreferences: $e');
+    }
   }
 }

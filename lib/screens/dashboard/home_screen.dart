@@ -71,7 +71,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   UserProfile? userProfile;
   bool isLoading = true;
   late AutomaticScreenTracker _automaticTracker;
-  Timer? _minuteTimer;
+  Timer? _refreshTimer;
 
   @override
   void initState() {
@@ -80,9 +80,24 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     _automaticTracker = AutomaticScreenTracker();
     _loadUserData();
     _startAutomaticTracking();
-    _startMinuteTimer();
+    _startRefreshTimer();
     _ensureBackgroundServiceRunning();
+    _setupSyncCallback();
   }
+
+  /// Set up sync completion callback
+  void _setupSyncCallback() {
+    ImprovedSyncService().setSyncCompleteCallback(() {
+      print('🔄 Sync completed - triggering UI update only');
+      // Just update UI state, don't trigger another full refresh
+      if (mounted) {
+        setState(() {});
+        print('🔄 UI updated after sync completion');
+      }
+    });
+  }
+
+
 
   /// Ensure background service is running
   Future<void> _ensureBackgroundServiceRunning() async {
@@ -108,30 +123,37 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     }
   }
 
-  void _startMinuteTimer() {
-    // Align first tick to the next minute boundary
-    final now = DateTime.now();
-    final int secondsUntilNextMinute = 60 - now.second;
-    print('⏰ Starting minute timer - will tick in ${secondsUntilNextMinute} seconds (at ${now.add(Duration(seconds: secondsUntilNextMinute)).toLocal()})');
-    Future.delayed(Duration(seconds: secondsUntilNextMinute), () {
-      print('⏰ First minute tick triggered');
-      _onMinuteTick();
-      _minuteTimer?.cancel();
-      _minuteTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-        print('⏰ Periodic minute tick triggered');
-        _onMinuteTick();
-      });
+  void _startRefreshTimer() {
+    // Start 5-minute refresh timer
+    print('⏰ Starting 5-minute refresh timer');
+    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      print('⏰ 5-minute refresh tick triggered');
+      _onRefreshTick();
     });
   }
 
-  Future<void> _onMinuteTick() async {
-    print('⏰ Dashboard minute tick - refreshing data');
-    _automaticTracker.checkForEndOfDay();
-    await _automaticTracker.refreshTodayData();
-    await PersistentTrackerService.reloadTodayData();
-    if (mounted) {
-      setState(() {});
-      print('🔄 Dashboard UI updated');
+  Future<void> _onRefreshTick() async {
+    try {
+      print('⏰ Dashboard 5-minute refresh - updating data');
+      
+      // Check for end of day first
+      await _automaticTracker.checkForEndOfDay();
+      
+      // Refresh tracker data
+      await _automaticTracker.refreshTodayData();
+      
+      // Reload background service data
+      await PersistentTrackerService.reloadTodayData();
+      
+      // Perform sync if needed
+      await ImprovedSyncService().performSync();
+      
+      if (mounted) {
+        setState(() {});
+        print('🔄 Dashboard UI updated (5-minute refresh)');
+      }
+    } catch (e) {
+      print('❌ Error in 5-minute refresh: $e');
     }
   }
 
@@ -172,7 +194,8 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _minuteTimer?.cancel();
+    _refreshTimer?.cancel();
+    ImprovedSyncService().clearSyncCompleteCallback();
     super.dispose();
   }
 
@@ -187,10 +210,8 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         // Ensure background service is running
         await _ensureBackgroundServiceRunning();
         
-        // Refresh data and sync
-        await _automaticTracker.refreshTodayData();
-        await ImprovedSyncService().performSync();
-        await PersistentTrackerService.reloadTodayData();
+        // Single comprehensive refresh that includes sync
+        await _comprehensiveRefresh();
         
         if (mounted) setState(() {});
         break;
@@ -207,6 +228,29 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         
       default:
         break;
+    }
+  }
+
+  /// Single comprehensive refresh method to avoid multiple calls
+  Future<void> _comprehensiveRefresh() async {
+    try {
+      print('🔄 Starting comprehensive refresh');
+      
+      // Refresh tracker data
+      await _automaticTracker.refreshTodayData();
+      
+      // Perform sync
+      await ImprovedSyncService().performSync();
+      
+      // Reload background service data
+      await PersistentTrackerService.reloadTodayData();
+      
+      // Refresh notification
+      await PersistentTrackerService.refreshNotificationAfterSync();
+      
+      print('🔄 Comprehensive refresh completed');
+    } catch (e) {
+      print('❌ Error in comprehensive refresh: $e');
     }
   }
 
@@ -311,7 +355,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                     ),
                                                     _DebugButton(
                                   label: 'Check Setup',
-                                  onPressed: () async {
+              onPressed: () async {
                                     final setupStatus = await FirstTimeSetupService.checkSetupStatus();
                                     print('🔧 Setup Status: $setupStatus');
                                     ScaffoldMessenger.of(context).showSnackBar(
@@ -325,7 +369,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                                 ),
                                 _DebugButton(
                                   label: 'Manual Refresh',
-                                  onPressed: () async {
+                    onPressed: () async {
                                     await _manualRefresh();
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(

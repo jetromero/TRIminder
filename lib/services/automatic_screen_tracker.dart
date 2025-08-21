@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
-import '../services/timer_manager.dart';
+
 import '../services/persistent_tracker_service.dart';
 
 /// Automatic screen time tracker that detects phone screen state
@@ -15,8 +13,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   factory AutomaticScreenTracker() => _instance;
   AutomaticScreenTracker._internal();
 
-  // Screen state monitoring (now uses centralized timer manager)
-  late TimerManager _timerManager;
+  // Screen state monitoring (simplified - no timer manager)
   
   // Tracking state
   bool _isMonitoring = false;
@@ -54,17 +51,6 @@ class AutomaticScreenTracker extends ChangeNotifier {
       _isMonitoring = true;
       await _loadTodayData();
       
-      // Initialize centralized timer manager
-      _timerManager = TimerManager();
-      
-      // Register timer callbacks instead of creating separate timers
-      _timerManager.registerEvery30Seconds('screen_tracker_session', _updateCurrentSession);
-      _timerManager.registerEvery30Seconds('screen_tracker_refresh', _onDataRefreshTick);
-      _timerManager.registerEveryHour('screen_tracker_end_of_day', _onEndOfDayCheck);
-      
-      // Start the centralized timer system
-      _timerManager.start();
-      
       print('Automatic screen monitoring started (display mode)');
       notifyListeners();
       return true;
@@ -79,13 +65,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   Future<void> stopMonitoring() async {
     if (!_isMonitoring) return;
 
-    // Unregister from centralized timer
-    _timerManager.unregister('screen_tracker_session');
-    _timerManager.unregister('screen_tracker_refresh');
-    _timerManager.unregister('screen_tracker_end_of_day');
-    
     _isMonitoring = false;
-
     print('Automatic screen monitoring stopped');
     notifyListeners();
   }
@@ -140,28 +120,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Timer callback: Update current session display (called every 30s)
-  void _updateCurrentSession() {
-    if (!_isMonitoring) return;
-    
-    if (_currentSessionStart != null) {
-      final now = DateTime.now();
-      _currentSessionMinutes = now.difference(_currentSessionStart!).inMinutes;
-      _updateRealTimeTodayTotal();
-      notifyListeners();
-    }
-  }
 
-  /// Timer callback: Refresh data from database (called every 30s)
-  void _onDataRefreshTick() async {
-    if (!_isMonitoring) return;
-    await refreshTodayData();
-  }
-
-  /// Timer callback: Check for end of day (called every hour)
-  void _onEndOfDayCheck() async {
-    await _checkForNewDay();
-  }
 
 
 
@@ -357,6 +316,8 @@ class AutomaticScreenTracker extends ChangeNotifier {
   /// Refresh today's data (call periodically to sync with background service)
   Future<void> refreshTodayData() async {
     print('🔄 AutomaticScreenTracker: refreshTodayData() called');
+    
+    // Load fresh data from database first
     await _loadTodayData();
     
     // Try to get current session state from background service
@@ -366,6 +327,27 @@ class AutomaticScreenTracker extends ChangeNotifier {
     _updateRealTimeTodayTotal();
     
     print('🔄 AutomaticScreenTracker: refreshTodayData() completed, notifying listeners');
+    notifyListeners();
+  }
+
+  /// Force refresh after sync completion (call after successful sync)
+  Future<void> forceRefreshAfterSync() async {
+    print('🔄 AutomaticScreenTracker: forceRefreshAfterSync() called');
+    
+    // Clear any cached data
+    _todayScreenTimeFromDatabase = 0;
+    _currentSessionMinutes = 0;
+    
+    // Load fresh data from database
+    await _loadTodayData();
+    
+    // Sync with background service
+    await _syncCurrentSessionFromBackground();
+    
+    // Update totals
+    _updateRealTimeTodayTotal();
+    
+    print('🔄 AutomaticScreenTracker: forceRefreshAfterSync() completed, notifying listeners');
     notifyListeners();
   }
 
