@@ -125,16 +125,16 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   void _startRefreshTimer() {
     // Start 1-minute refresh timer
-    print('⏰ Starting 1-minute refresh timer');
-    _refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      print('⏰ 1-minute refresh tick triggered');
+    print('⏰ Starting 3-second refresh timer');
+    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      print('⏰ 3-second refresh tick triggered');
       _onRefreshTick();
     });
   }
 
   Future<void> _onRefreshTick() async {
     try {
-      print('⏰ Dashboard 1-minute refresh - updating data');
+      print('⏰ Dashboard 3-second refresh - updating data');
       
       // Check for end of day first
       await _automaticTracker.checkForEndOfDay();
