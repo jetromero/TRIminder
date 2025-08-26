@@ -124,17 +124,17 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   }
 
   void _startRefreshTimer() {
-    // Start 5-minute refresh timer
-    print('⏰ Starting 5-minute refresh timer');
-    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
-      print('⏰ 5-minute refresh tick triggered');
+    // Start 1-minute refresh timer
+    print('⏰ Starting 1-minute refresh timer');
+    _refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      print('⏰ 1-minute refresh tick triggered');
       _onRefreshTick();
     });
   }
 
   Future<void> _onRefreshTick() async {
     try {
-      print('⏰ Dashboard 5-minute refresh - updating data');
+      print('⏰ Dashboard 1-minute refresh - updating data');
       
       // Check for end of day first
       await _automaticTracker.checkForEndOfDay();
@@ -150,10 +150,10 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       
       if (mounted) {
         setState(() {});
-        print('🔄 Dashboard UI updated (5-minute refresh)');
+        print('🔄 Dashboard UI updated (1-minute refresh)');
       }
     } catch (e) {
-      print('❌ Error in 5-minute refresh: $e');
+      print('❌ Error in 1-minute refresh: $e');
     }
   }
 
@@ -244,9 +244,6 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       
       // Reload background service data
       await PersistentTrackerService.reloadTodayData();
-      
-      // Refresh notification
-      await PersistentTrackerService.refreshNotificationAfterSync();
       
       print('🔄 Comprehensive refresh completed');
     } catch (e) {

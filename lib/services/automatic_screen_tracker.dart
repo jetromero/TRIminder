@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+// import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 
@@ -91,9 +93,13 @@ class AutomaticScreenTracker extends ChangeNotifier {
     print('Session display refreshed - letting background service handle actual tracking');
   }
 
-  /// Update today's total (database only - no live session)
   void _updateRealTimeTodayTotal() {
-    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase; // Only database total
+    // Calculate total from database + current session
+    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
+
+    print("🔍 _currentSessionMinutes: $_currentSessionMinutes");
+    
+    
     
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
@@ -323,6 +329,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Try to get current session state from background service
     await _syncCurrentSessionFromBackground();
     
+    
     // Update the total to show database + live session
     _updateRealTimeTodayTotal();
     
@@ -352,32 +359,85 @@ class AutomaticScreenTracker extends ChangeNotifier {
   }
 
   /// Try to sync current session state from background service
-  Future<void> _syncCurrentSessionFromBackground() async {
+  /// This uses the same data source as the notification for consistency
+Future<void> _syncCurrentSessionFromBackground() async {
+  try {
+    // Get session data directly from background service (same as notification)
+    final sessionData = await PersistentTrackerService.getCurrentSessionData();
+    
+    print('🔍 DEBUG: Background service session data: $sessionData');
+    
+    final hasActiveSession = sessionData['hasActiveSession'] ?? false;
+    final sessionStartTimeMs = sessionData['sessionStartTime'];
+    final currentMinutes = sessionData['currentMinutes'] ?? 0;
+    final todayTotal = sessionData['todayTotal'] ?? 0;
+    final timestamp = sessionData['timestamp'];
+    
+    print('🔍 DEBUG: Background service values:');
+    print('   - hasActiveSession: $hasActiveSession');
+    print('   - sessionStartTime: $sessionStartTimeMs');
+    print('   - currentMinutes: $currentMinutes');
+    print('   - todayTotal: $todayTotal');
+    print("   - Timestamp: $timestamp");
+
+
+    bool assignedFromService = false;
+    if (hasActiveSession && sessionStartTimeMs != null) {
+      _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
+      _currentSessionMinutes = currentMinutes;
+      assignedFromService = true;
+      print('📱 Found active session via background service: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
+    }
+
+    // Fallback to SharedPreferences-staged session if service not available or reported none
+    if (!assignedFromService) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final bool prefActive = prefs.getBool('has_active_session') ?? false;
+        final int? startMs = prefs.getInt('session_start_time');
+        final int prefMinutes = prefs.getInt('current_session_minutes') ?? 0;
+
+        if (prefActive && startMs != null) {
+          final DateTime start = DateTime.fromMillisecondsSinceEpoch(startMs);
+          final int liveMinutes = DateTime.now().difference(start).inMinutes;
+          _currentSessionStart = start;
+          _currentSessionMinutes = liveMinutes >= prefMinutes ? liveMinutes : prefMinutes;
+          print('📱 Fallback from SharedPreferences: ${_currentSessionMinutes}m (started at ${start.toLocal()})');
+        } else {
+          _currentSessionStart = null;
+          _currentSessionMinutes = 0;
+          print('📱 No active session via SharedPreferences fallback (active=$prefActive)');
+        }
+      } catch (e) {
+        print('❌ Error reading SharedPreferences for session fallback: $e');
+        _currentSessionStart = null;
+        _currentSessionMinutes = 0;
+      }
+    }
+  } catch (e) {
+    print('❌ Error syncing session from background service: $e');
+    // Final fallback to SharedPreferences on channel errors
     try {
-      // Get session data directly from background service
-      final sessionData = await PersistentTrackerService.getCurrentSessionData();
-      
-      print('🔍 Direct service session data: $sessionData');
-      
-      final hasActiveSession = sessionData['hasActiveSession'] ?? false;
-      final sessionStartTimeMs = sessionData['sessionStartTime'];
-      final currentMinutes = sessionData['currentMinutes'] ?? 0;
-      
-      if (hasActiveSession && sessionStartTimeMs != null) {
-        _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
-        _currentSessionMinutes = currentMinutes;
-        print('📱 Found active session via service: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
+      final prefs = await SharedPreferences.getInstance();
+      final bool prefActive = prefs.getBool('has_active_session') ?? false;
+      final int? startMs = prefs.getInt('session_start_time');
+      final int prefMinutes = prefs.getInt('current_session_minutes') ?? 0;
+      if (prefActive && startMs != null) {
+        final DateTime start = DateTime.fromMillisecondsSinceEpoch(startMs);
+        final int liveMinutes = DateTime.now().difference(start).inMinutes;
+        _currentSessionStart = start;
+        _currentSessionMinutes = liveMinutes >= prefMinutes ? liveMinutes : prefMinutes;
+        print('📱 Fallback from SharedPreferences after error: ${_currentSessionMinutes}m (started at ${start.toLocal()})');
       } else {
         _currentSessionStart = null;
         _currentSessionMinutes = 0;
-        print('📱 No active session found via service (hasActiveSession=$hasActiveSession)');
       }
-    } catch (e) {
-      print('❌ Error syncing session from service: $e');
+    } catch (_) {
       _currentSessionStart = null;
       _currentSessionMinutes = 0;
     }
   }
+}
 
   /// Sync current session state from background service
   void syncCurrentSessionState(DateTime? sessionStartTime) {

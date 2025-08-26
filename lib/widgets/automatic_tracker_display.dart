@@ -132,6 +132,33 @@ class _AutomaticTrackerDisplayState extends State<AutomaticTrackerDisplay> {
             ],
           ),
 
+          // Debug timestamp widget
+          SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.blue.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.access_time, size: 16, color: Colors.blue.shade700),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Last Refresh: ${_lastUpdate.toLocal().toString().substring(11, 19)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.blue.shade700,
+                      fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           // Current session indicator removed for consistency
 
           // Today's Badges

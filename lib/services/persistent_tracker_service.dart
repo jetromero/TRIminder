@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter/widgets.dart';
+import 'dart:ui' as ui;
+import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:screen_state/screen_state.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,16 +21,22 @@ class _ServiceData {
   DateTime lastSaveDate = DateTime.now();
 }
 
+class DashboardData {
+  int todayScreenTimeFromDashboardClass = 0;
+}
+
+final dashboardData = DashboardData();
+
 /// Persistent background service that runs automatically on device boot
 /// Tracks screen time 24/7 without user intervention
 /// Survives app closure, phone restarts, and system termination
 @pragma('vm:entry-point')
 class PersistentTrackerService {
-  static const int _minSessionSeconds = 20;
+  static const int _minSessionSeconds = 180;
 
   static int _roundSecondsToMinutesNearest(int seconds) {
-    final int minutes = ((seconds + 30) / 60).floor();
-    return minutes < 1 ? 1 : minutes;
+    final int minutes = (seconds / 60).round();
+    return minutes;
   }
 
   static Future<int> _saveSessionRounded(DateTime start, DateTime end) async {
@@ -161,9 +170,14 @@ class PersistentTrackerService {
       final isRunning = await service.isRunning();
       
       if (isRunning) {
-        // Send message to background service to reload data
-        service.invoke('reload_today_data');
-        print('📊 Sent reload command to background service');
+        // Send message to background service to reload data - wrap in try-catch for MissingPluginException
+        try {
+          service.invoke('reload_today_data');
+          print('📊 Sent reload command to background service');
+        } catch (channelError) {
+          print('❌ Method channel error in reloadTodayData: $channelError');
+          // Continue without throwing - the UI will still work with SharedPreferences fallback
+        }
       } else {
         print('⚠️ Background service is not running!');
       }
@@ -193,11 +207,12 @@ class PersistentTrackerService {
     }
   }
 
-  /// Get current session data directly from background service
+  /// Get current session data directly from background service (for isWorkingOnlyOnDashboard use)
   static Future<Map<String, dynamic>> getCurrentSessionData() async {
     try {
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
+      print("🔍 getCurrentSessionData: isRunning: $isRunning");
       
       if (!isRunning) {
         return {
@@ -209,51 +224,68 @@ class PersistentTrackerService {
         };
       }
 
-      // Trigger session data update in background service
-      service.invoke('get_session_data');
+      // Create a unique request ID to avoid conflicts
+      final requestId = DateTime.now().millisecondsSinceEpoch;
+      final completer = Completer<Map<String, dynamic>>();
+      StreamSubscription? subscription;
       
-      // Wait for the background service to update SharedPreferences
-      await Future.delayed(const Duration(milliseconds: 100));
+      try {
+        // Set up listener with unique identifier
+        subscription = service.on('session_data_response').listen((data) {
+          if (data != null && data['requestId'] == requestId) {
+            completer.complete(Map<String, dynamic>.from(data));
+            print("🔍 data: ${data}");
+          }
+        });
+        
+        // Send request with unique ID - wrap in try-catch for MissingPluginException
+        try {
+          service.invoke('get_session_data', {'requestId': requestId});
+          print("🔍 requestId: $requestId");
+        } catch (channelError) {
+          print('❌ Method channel error: $channelError');
+          // Return fallback data immediately if channel fails
+          return {
+            'hasActiveSession': false,
+            'sessionStartTime': null,
+            'currentMinutes': 0,
+            'todayTotal': 0,
+            'error': 'Channel error: ${channelError.toString()}',
+          };
+        }
+        
+        // Wait for response with longer timeout
+        final result = await completer.future.timeout(
+          const Duration(minutes: 1), // Increased timeout
+          onTimeout: () => {
+            'hasActiveSession': false,
+            'sessionStartTime': null,
+            'currentMinutes': 0,
+            'todayTotal': 0,
+            'error': 'Timeout 1 minute',
+          },
+        );
+        
+        return result;
+        
+      } finally {
+        // Always clean up the subscription
+        subscription?.cancel();
+      }
       
-      // Get the updated data from SharedPreferences
-      Map<String, dynamic> sessionData = await _getSessionDataFromSharedPreferences();
-      
-      return sessionData;
     } catch (e) {
       print('❌ Error getting session data from service: $e');
-      // Fallback to SharedPreferences
-      return await _getSessionDataFromSharedPreferences();
-    }
-  }
-
-  /// Fallback method to get session data from SharedPreferences
-  static Future<Map<String, dynamic>> _getSessionDataFromSharedPreferences() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final hasActiveSession = prefs.getBool('has_active_session') ?? false;
-      final sessionStartTimeMs = prefs.getInt('session_start_time');
-      final currentMinutes = prefs.getInt('current_session_minutes') ?? 0;
-      
-      return {
-        'hasActiveSession': hasActiveSession,
-        'sessionStartTime': sessionStartTimeMs,
-        'currentMinutes': currentMinutes,
-        'todayTotal': 0, // Would need to load from DB
-        'timestamp': DateTime.now().toIso8601String(),
-        'source': 'SharedPreferences',
-      };
-    } catch (e) {
       return {
         'hasActiveSession': false,
         'sessionStartTime': null,
         'currentMinutes': 0,
         'todayTotal': 0,
         'error': e.toString(),
-        'timestamp': DateTime.now().toIso8601String(),
       };
     }
   }
 
+  
   /// Request necessary permissions for background operation
   static Future<bool> _requestPermissions() async {
     final permissions = [
@@ -310,10 +342,26 @@ class PersistentTrackerService {
   @pragma('vm:entry-point')
   @pragma('dart2js:tryInline')
   static void _onStart(ServiceInstance service) async {
+    // Ensure Flutter binding and plugins are registered in the background isolate
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      // Registers all plugins (fixes MissingPluginException in background isolate)
+      ui.DartPluginRegistrant.ensureInitialized();
+      
+      // Specifically register the background service plugin
+      if (service is AndroidServiceInstance) {
+        // This ensures the Android-specific plugin is registered
+        print('✅ Android service instance detected and plugins registered');
+      }
+    } catch (e) {
+      print('⚠️ Plugin registration error: $e');
+    }
+
     print('🎯 Background service started in isolate');
 
     // Initialize service data with wrapper class for reference passing
     final serviceData = _ServiceData();
+    
     serviceData.lastSaveDate = DateTime.now();
 
     // Load today's total screen time from database
@@ -377,80 +425,48 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 5 minutes)
-    Timer.periodic(const Duration(minutes: 5), (timer) async {
+    // Periodic tasks (every 1 minute)
+    Timer.periodic(const Duration(minutes: 1), (timer) async {
       try {
-        // Checkpoint save for long-running sessions (every 5 minutes)
+        // Reload today's total from DB (every tick since we're now on 1-minute intervals)
+        await _loadTodayScreenTime(serviceData);
+
+        // Calculate total: database + current session
+        int totalMinutes = serviceData.todayScreenTime; // Database total
         if (serviceData.screenOnTime != null) {
           final DateTime now = DateTime.now();
-          final int elapsedSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
-          if (elapsedSeconds >= 300) { // 5 minutes
-            final int saved = await _savePossiblySplitSession(serviceData.screenOnTime!, now);
-            print('⏱️ Checkpoint: active ${elapsedSeconds}s → saved ${saved}m, resetting start');
-            // Reset start to now for the next chunk
-            serviceData.screenOnTime = now;
-          }
+          final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
+          totalMinutes += sessionSeconds ~/ 60; // Add current session
           
-          // Check for screen off timeout (1 minute)
-          if (serviceData.screenOffTime != null) {
-            final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
-            if (timeSinceScreenOff >= 1) {
-              print('⏰ Screen OFF timeout: ${timeSinceScreenOff}m since screen off, ending session');
-              serviceData.screenOnTime = null;
-              serviceData.screenOffTime = null;
-              // Clear session data from SharedPreferences
-              try {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool('has_active_session', false);
-                await prefs.remove('session_start_time');
-                await prefs.setInt('current_session_minutes', 0);
-                print('🧹 Cleared session data after screen off timeout');
-              } catch (e) {
-                print('❌ Error clearing session data after screen off timeout: $e');
-              }
-            }
-          }
-          
-          // End session after 30 minutes of total inactivity (1800 seconds)
-          if (elapsedSeconds >= 1800) {
-            print('⏰ Session timeout: ${elapsedSeconds}s of inactivity, ending session');
-            serviceData.screenOnTime = null;
-            serviceData.screenOffTime = null;
-            // Clear session data from SharedPreferences
-            try {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('has_active_session', false);
-              await prefs.remove('session_start_time');
-              await prefs.setInt('current_session_minutes', 0);
-              print('🧹 Cleared session data after timeout');
-            } catch (e) {
-              print('❌ Error clearing session data after timeout: $e');
-            }
-          }
         }
 
-        // Reload today's total from DB (every tick since we're now on 5-minute intervals)
-        await _loadTodayScreenTime(serviceData);
+        
 
         // Compute live display with current session (for dashboard only, not notification)
         int liveExtra = 0;
+        print('�� DEBUG: serviceData.screenOnTime = ${serviceData.screenOnTime}');
         if (serviceData.screenOnTime != null) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
           liveExtra = sessionSeconds ~/ 60; // floor to minutes
           
+          print('🔍 DEBUG: Active session found - liveExtra = ${liveExtra}m');
           // Store current session info for dashboard access via SharedPreferences
           await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, liveExtra);
         } else {
+          print('🔍 DEBUG: No active session - screenOnTime is null');
           // No active session
           await _updateSessionDataInSharedPreferences(false, null, 0);
         }
 
-        // Notification shows only database total (no live session) to match dashboard
-        final int hours = serviceData.todayScreenTime ~/ 60;
-        final int minutes = serviceData.todayScreenTime % 60;
+
+        // Format total time
+        final int hours = totalMinutes ~/ 60;
+        final int minutes = totalMinutes % 60;
         final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-        
+        dashboardData.todayScreenTimeFromDashboardClass = totalMinutes;
+
+        // Update notification with total
         if (service is AndroidServiceInstance) {
           service.setForegroundNotificationInfo(
             title: 'TRIminder Tracking',
@@ -464,20 +480,19 @@ class PersistentTrackerService {
           print('📅 New day detected - resetting daily counter');
           serviceData.lastSaveDate = now;
           serviceData.todayScreenTime = 0;
+          
+          // Reset session but restart tracking immediately if screen is on
+          if (serviceData.screenOnTime != null) {
+            serviceData.screenOnTime = DateTime.now(); // Restart session for new day
+            print('📱 Session reset and restarted for new day at ${serviceData.screenOnTime}');
+          } else {
+            serviceData.screenOnTime = null;
+            print('📱 Session reset for new day - no active session');
+          }
+          
           await _loadTodayScreenTime(serviceData);
         }
 
-        // Auto-restart check (every 10 minutes = every 2 ticks)
-        if (timer.tick % 2 == 0) {
-          print('🔍 Auto-restart check: Service running for ${timer.tick * 5} minutes');
-          // Keep the service alive by updating notification (simplified)
-          if (service is AndroidServiceInstance) {
-            service.setForegroundNotificationInfo(
-              title: 'TRIminder Tracking',
-              content: 'Today: $timeStr',
-            );
-          }
-        }
 
       } catch (e) {
         print('❌ Error in periodic task: $e');
@@ -504,79 +519,53 @@ class PersistentTrackerService {
       service.stopSelf();
     });
 
-    // Listen for reload command
-    service.on('reload_today_data').listen((event) async {
-      print('🔄 Received reload command');
-      await _loadTodayScreenTime(serviceData);
-      
-      // Update notification with new data
-      if (service is AndroidServiceInstance) {
-        final hours = serviceData.todayScreenTime ~/ 60;
-        final minutes = serviceData.todayScreenTime % 60;
-        final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-        service.setForegroundNotificationInfo(
-          title: 'TRIminder Tracking',
-          content: 'Today: $timeStr screen time',
-        );
-      }
-    });
-
-    // Listen for status request
-    service.on('get_status').listen((event) async {
-      print('📊 Status request received');
-      final hours = serviceData.todayScreenTime ~/ 60;
-      final minutes = serviceData.todayScreenTime % 60;
-      final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-      
-      print('📊 Background Service Status:');
-      print('   - Running: true');
-      print('   - Today screen time: $timeStr (${serviceData.todayScreenTime} minutes)');
-      print('   - Screen on time: ${serviceData.screenOnTime}');
-      print('   - Last save date: ${serviceData.lastSaveDate}');
-      
-      // Recreate notification if it was removed
-      if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(
-          title: 'TRIminder Tracking',
-          content: 'Today: $timeStr screen time',
-        );
-        print('📱 Recreated notification');
-      }
-    });
 
     // Listen for session data request
     service.on('get_session_data').listen((event) async {
-      print('📊 Session data request received');
-      
-      // Calculate current session minutes
+      final reqId = event?['requestId'];
+
+      print("🔍 reqId: $reqId");
+
       int currentMinutes = 0;
       if (serviceData.screenOnTime != null) {
         final now = DateTime.now();
         final sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
         currentMinutes = sessionSeconds ~/ 60;
       }
-      
-      // Update session data in SharedPreferences using consolidated method
-      await _updateSessionDataInSharedPreferences(
-        serviceData.screenOnTime != null,
-        serviceData.screenOnTime,
-        currentMinutes,
-      );
+
+      FlutterBackgroundService().invoke('session_data_response', {
+        'requestId': reqId, // critical for matching
+        'hasActiveSession': serviceData.screenOnTime != null,
+        'sessionStartTime': serviceData.screenOnTime?.millisecondsSinceEpoch,
+        'currentMinutes': currentMinutes,
+        'todayTotal': serviceData.todayScreenTime,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
     });
 
-    // Listen for notification update request (after sync)
-    service.on('update_notification').listen((event) async {
-      print('📱 Notification update request received');
-      
-      final title = event?['title'] ?? 'TRIminder Tracking';
-      final content = event?['content'] ?? 'Today: 0m';
-      
-      if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(
-          title: title,
-          content: content,
+    // Handle explicit reload request from foreground
+    service.on('reload_today_data').listen((event) async {
+      try {
+        // Reload today's total from DB
+        await _loadTodayScreenTime(serviceData);
+
+        // Recompute live session minutes for dashboard consumers
+        int liveExtra = 0;
+        if (serviceData.screenOnTime != null) {
+          final DateTime now = DateTime.now();
+          final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
+          liveExtra = sessionSeconds ~/ 60; // floor to minutes
+        }
+
+        // Persist session snapshot for UI access (parity with periodic task)
+        await _updateSessionDataInSharedPreferences(
+          serviceData.screenOnTime != null,
+          serviceData.screenOnTime,
+          liveExtra,
         );
-        print('📱 Notification updated: $title - $content');
+
+      } catch (e) {
+        print('❌ Error handling reload_today_data: $e');
       }
     });
   }
@@ -678,22 +667,11 @@ class PersistentTrackerService {
 
             // Reload today's total from DB to ensure consistency
             await _loadTodayScreenTime(serviceData);
-
-            // Update notification using DB-backed total
-              if (service is AndroidServiceInstance) {
-              final int hours = serviceData.todayScreenTime ~/ 60;
-              final int minutes = serviceData.todayScreenTime % 60;
-              final String totalStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-                service.setForegroundNotificationInfo(
-                  title: 'TRIminder Tracking',
-                content: 'Today: $totalStr screen time',
-                );
-            }
             
             // Start a timeout timer for screen OFF
-            // If no SCREEN_ON within 1 minute, end the session
+            // If no SCREEN_ON within 3 minutes, end the session
             serviceData.screenOffTime = screenOffTime;
-            print('⏰ Screen OFF timeout started - session will end in 1 minute if no activity');
+            print('⏰ Screen OFF timeout started - session will end in 3 minutes if no activity');
           }
           break;
           
@@ -711,6 +689,8 @@ class PersistentTrackerService {
       print('❌ Error handling screen event: $e');
     }
   }
+
+  
 
   /// Save individual screen session
   static Future<void> _saveSession(DateTime start, DateTime end, int minutes) async {
@@ -812,32 +792,6 @@ class PersistentTrackerService {
   static Future<bool> _onIosBackground(ServiceInstance service) async {
     print('📱 iOS background mode activated');
     return true;
-  }
-
-  /// Force refresh notification after sync completion
-  static Future<void> refreshNotificationAfterSync() async {
-    try {
-      print('🔄 Refreshing notification after sync completion');
-      
-      // Reload today's data from database
-      final serviceData = _ServiceData();
-      await _loadTodayScreenTime(serviceData);
-      
-      // Update notification with fresh data
-      final int hours = serviceData.todayScreenTime ~/ 60;
-      final int minutes = serviceData.todayScreenTime % 60;
-      final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-      
-      // Send event to background service to update notification
-      FlutterBackgroundService().invoke('update_notification', {
-        'title': 'TRIminder Tracking',
-        'content': 'Today: $timeStr',
-      });
-      
-      print('📱 Notification refresh event sent after sync: $timeStr');
-    } catch (e) {
-      print('❌ Error refreshing notification after sync: $e');
-    }
   }
 
   /// Update session data in SharedPreferences
