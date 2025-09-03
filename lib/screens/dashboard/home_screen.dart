@@ -70,6 +70,7 @@ class DashboardTab extends StatefulWidget {
 class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver {
   UserProfile? userProfile;
   bool isLoading = true;
+  bool _isOffline = false;
   late AutomaticScreenTracker _automaticTracker;
   Timer? _refreshTimer;
 
@@ -78,6 +79,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _automaticTracker = AutomaticScreenTracker();
+    _checkConnectivity();
     _loadUserData();
     _startAutomaticTracking();
     _startRefreshTimer();
@@ -97,7 +99,21 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     });
   }
 
-
+    /// Check connectivity status
+  Future<void> _checkConnectivity() async {
+    try {
+      final isConnected = await SupabaseService().isConnected();
+      setState(() {
+        _isOffline = !isConnected;
+      });
+      print('�� Connectivity check: ${_isOffline ? 'Offline' : 'Online'}');
+    } catch (e) {
+      setState(() {
+        _isOffline = true;
+      });
+      print('�� Connectivity check failed, assuming offline: $e');
+    }
+  }
 
   /// Ensure background service is running
   Future<void> _ensureBackgroundServiceRunning() async {
@@ -124,38 +140,48 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   }
 
   void _startRefreshTimer() {
-    // Start 1-minute refresh timer
-    print('⏰ Starting 3-second refresh timer');
-    _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      print('⏰ 3-second refresh tick triggered');
+    // Adjust interval based on connectivity
+    final interval = _isOffline ? Duration(seconds: 30) : Duration(seconds: 3);
+    print('⏰ Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
+    _refreshTimer = Timer.periodic(interval, (_) {
+      print('⏰ ${interval.inSeconds}-second refresh tick triggered');
       _onRefreshTick();
     });
   }
 
   Future<void> _onRefreshTick() async {
-    try {
-      print('⏰ Dashboard 3-second refresh - updating data');
-      
-      // Check for end of day first
-      await _automaticTracker.checkForEndOfDay();
-      
-      // Refresh tracker data
-      await _automaticTracker.refreshTodayData();
-      
-      // Reload background service data
-      await PersistentTrackerService.reloadTodayData();
-      
-      // Perform sync if needed
+  try {
+    print('⏰ Dashboard refresh - updating data (offline: $_isOffline)');
+    
+    // Add timeout to prevent hanging
+    // Check for end of day first
+    await _automaticTracker.checkForEndOfDay();
+    
+    // Refresh tracker data
+    await _automaticTracker.refreshTodayData();
+    
+    // Reload background service data
+    await PersistentTrackerService.reloadTodayData();
+    
+    // Only perform sync if online
+    if (!_isOffline) {
       await ImprovedSyncService().performSync();
-      
-      if (mounted) {
-        setState(() {});
-        print('🔄 Dashboard UI updated (1-minute refresh)');
-      }
-    } catch (e) {
-      print('❌ Error in 1-minute refresh: $e');
+    } else {
+      print('📱 Skipping sync - offline mode');
+    }
+    
+    if (mounted) {
+      setState(() {});
+      print('🔄 Dashboard UI updated');
+    }
+  } catch (e) {
+    print('❌ Error in refresh (timeout or other): $e');
+    // Still update UI even if refresh fails
+    if (mounted) {
+      setState(() {});
     }
   }
+}
 
   // Manual refresh method for debugging
   Future<void> _manualRefresh() async {
@@ -205,7 +231,10 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     
     switch (state) {
       case AppLifecycleState.resumed:
-        print('App resumed - refreshing data and syncing');
+        print('App resumed - checking connectivity and refreshing data');
+        
+        // Check connectivity first
+        await _checkConnectivity();
         
         // Ensure background service is running
         await _ensureBackgroundServiceRunning();
@@ -271,6 +300,34 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   List<Widget> _getDashboardWidgets() {
     return [
+      // Offline indicator
+      if (_isOffline)
+        Card(
+          color: Colors.orange.shade100,
+          child: Padding(
+            padding: ResponsiveUtils.getCardPadding(context),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.wifi_off,
+                  color: Colors.orange.shade700,
+                  size: ResponsiveUtils.getIconSize(context),
+                ),
+                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+                Expanded(
+                  child: Text(
+                    'Offline Mode - Data may be outdated',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.orange.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      
       // Welcome Section
       WelcomeCard(userProfile: userProfile),
       

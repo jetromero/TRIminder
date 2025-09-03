@@ -3,22 +3,24 @@ import 'screens/splash_screen.dart';
 import 'services/persistent_tracker_service.dart';
 import 'services/first_time_setup_service.dart';
 import 'services/supabase_service.dart';
+import 'config/app_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Initialize secure configuration
+  await AppConfig.initialize();
+  
   try {
-    // Initialize Supabase
+    // Initialize Supabase with secure configuration
     await SupabaseService.initialize(
-      url: 'https://mgfnwykwlrbxisiltmqe.supabase.co',
-      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nZm53eWt3bHJieGlzaWx0bXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0MTEzNzYsImV4cCI6MjA3MDk4NzM3Nn0.dM6kl0SfNF8Jw9i0NrLlO8KcsjHbLUVgFEOTYsVL_zM',
+      url: AppConfig.supabaseUrl,
+      anonKey: AppConfig.supabaseAnonKey,
     );
 
     // Perform first-time setup
     await FirstTimeSetupService.performFirstTimeSetup();
 
-    // Start the persistent tracker service
-    await PersistentTrackerService.startService();
   } catch (e) {
     print('Error initializing Supabase: $e');
   }
@@ -33,6 +35,7 @@ void main() async {
   
   runApp(const TRIminderApp());
 }
+
 
 class TRIminderApp extends StatelessWidget {
   const TRIminderApp({super.key});

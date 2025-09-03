@@ -35,7 +35,7 @@ final dashboardData = DashboardData();
 /// Survives app closure, phone restarts, and system termination
 @pragma('vm:entry-point')
 class PersistentTrackerService {
-  static const int _minSessionSeconds = 180;
+  static const int _minSessionSeconds = 1200;
 
   static int _roundSecondsToMinutesNearest(int seconds) {
     final int minutes = (seconds / 60).round();
