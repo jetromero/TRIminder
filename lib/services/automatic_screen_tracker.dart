@@ -93,13 +93,27 @@ class AutomaticScreenTracker extends ChangeNotifier {
     print('Session display refreshed - letting background service handle actual tracking');
   }
 
-  void _updateRealTimeTodayTotal() {
-    // Calculate total from database + current session
-    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
+  Future<int> _getStagedMinutes() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId != null) {
+        return await PersistentTrackerService.getStagedMinutesForToday(userId);
+      }
+    } catch (e) {
+      print('❌ Error getting staged minutes: $e');
+    }
+    return 0;
+  }
 
-    print("🔍 _currentSessionMinutes: $_currentSessionMinutes");
-    
-    
+  void _updateRealTimeTodayTotal() async {
+  // Calculate total from database + current session + staged
+  final stagedMinutes = await _getStagedMinutes();
+  _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes + stagedMinutes;
+  
+  print("🔍 _currentSessionMinutes: $_currentSessionMinutes");
+  print("🔍 Staged minutes: $stagedMinutes");
+  print("🔍 Total: $_todayScreenTimeMinutes");
+  
     
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
@@ -200,46 +214,46 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Digital wellness XP tiers (daily total)
     if (totalMinutes <= 120) {
       return 100; // 🏆 Excellent! (<2 hours)
-    } else if (totalMinutes <= 180) {
-      return 75;  // 🥇 Great! (2-3 hours)
     } else if (totalMinutes <= 240) {
-      return 50;  // 🥈 Good (3-4 hours)
-    } else if (totalMinutes <= 300) {
-      return 25;  // 🥉 Fair (4-5 hours)
-    } else if (totalMinutes <= 420) {
-      return 10;  // ⚠️ High usage (5-7 hours)
+      return 75;  // 🥇 Great! (2-4 hours)
+    } else if (totalMinutes <= 360) {
+      return 50;  // 🥈 Good (4-6 hours)
+    } else if (totalMinutes <= 480) {
+      return 25;  // 🥉 Fair (6-8 hours)
+    } else if (totalMinutes <= 600) {
+      return 10;  // ⚠️ High usage (8-10 hours)
     } else {
-      return 0;   // 🚨 Excessive usage (7+ hours)
+      return 0;   // 🚨 Excessive usage (10+ hours)
     }
   }
 
   /// Get wellness rating based on daily usage
   String _getWellnessRating(int totalMinutes) {
     if (totalMinutes <= 120) return 'Excellent 🏆';
-    if (totalMinutes <= 180) return 'Great 🥇';
-    if (totalMinutes <= 240) return 'Good 🥈';
-    if (totalMinutes <= 300) return 'Fair 🥉';
-    if (totalMinutes <= 420) return 'High ⚠️';
-    return 'Excessive 🚨';
+    if (totalMinutes <= 240) return 'Great 🥇';
+    if (totalMinutes <= 360) return 'Good 🥈';
+    if (totalMinutes <= 480) return 'Fair 🥉';
+    if (totalMinutes <= 600) return 'High ⚠️';
+    return 'Touch some grass 🌱';
   }
 
   /// Get daily badges based on usage
   List<String> _getDailyBadges(int totalMinutes) {
     List<String> badges = [];
     
-    if (totalMinutes <= 60) {
+    if (totalMinutes <= 120) {
       badges.add('Digital Sage'); // Ultra minimal
     } 
-    else if (totalMinutes <= 120) {
+    else if (totalMinutes <= 240) {
       badges.add('Mindful Master'); // Excellent
     } 
-    else if (totalMinutes <= 180) {
+    else if (totalMinutes <= 360) {
       badges.add('Balanced User'); // Very good
     } 
-    else if (totalMinutes <= 240) {
+    else if (totalMinutes <= 480) {
       badges.add('Conscious User'); // Good
     } 
-    else if (totalMinutes <= 300) {
+    else if (totalMinutes <= 600) {
       badges.add('Aware User'); // Okay
     }
     // No badges for excessive usage

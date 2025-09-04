@@ -5,13 +5,19 @@ class AppConfig {
   
   // Supabase Configuration
   static String get supabaseUrl {
-    return dotenv.env['SUPABASE_URL'] ?? 
-           'https://mgfnwykwlrbxisiltmqe.supabase.co';
+    final url = dotenv.env['SUPABASE_URL'];
+    if (url == null) {
+      throw Exception('SUPABASE_URL not found in .env file');
+    }
+    return url;
   }
   
   static String get supabaseAnonKey {
-    return dotenv.env['SUPABASE_ANON_KEY'] ?? 
-           'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nZm53eWt3bHJieGlzaWx0bXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0MTEzNzYsImV4cCI6MjA3MDk4NzM3Nn0.dM6kl0SfNF8Jw9i0NrLlO8KcsjHbLUVgFEOTYsVL_zM';
+    final key = dotenv.env['SUPABASE_ANON_KEY'];
+    if (key == null) {
+      throw Exception('SUPABASE_ANON_KEY not found in .env file');
+    }
+    return key;
   }
   
   // App Configuration

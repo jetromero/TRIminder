@@ -300,33 +300,6 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   List<Widget> _getDashboardWidgets() {
     return [
-      // Offline indicator
-      if (_isOffline)
-        Card(
-          color: Colors.orange.shade100,
-          child: Padding(
-            padding: ResponsiveUtils.getCardPadding(context),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.wifi_off,
-                  color: Colors.orange.shade700,
-                  size: ResponsiveUtils.getIconSize(context),
-                ),
-                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-                Expanded(
-                  child: Text(
-                    'Offline Mode - Data may be outdated',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.orange.shade700,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       
       // Welcome Section
       WelcomeCard(userProfile: userProfile),
@@ -700,6 +673,87 @@ class XPProgressCard extends StatelessWidget {
   
   const XPProgressCard({super.key, this.userProfile});
 
+
+  void _showXPLegend(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              Icons.star,
+              color: Colors.amber,
+              size: ResponsiveUtils.getIconSize(context),
+            ),
+            SizedBox(width: ResponsiveUtils.getSpacing(context)),
+            Text('XP Legend'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Daily XP based on screen time:',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            SizedBox(height: ResponsiveUtils.getSpacing(context)),
+            _buildLegendItem(context, '≤2 hours', '100 XP', 'Excellent 🏆', Colors.green),
+            _buildLegendItem(context, '2-4 hours', '75 XP', 'Great 🥇', Colors.lightGreen),
+            _buildLegendItem(context, '4-6 hours', '50 XP', 'Good 🥈', Colors.orange),
+            _buildLegendItem(context, '6-8 hours', '25 XP', 'Fair 🥉', Colors.deepOrange),
+            _buildLegendItem(context, '8-10 hours', '10 XP', 'High ⚠️', Colors.red),
+            _buildLegendItem(context, '10+ hours', '0 XP', 'Excessive 🚨', Colors.red.shade800),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+Widget _buildLegendItem(BuildContext context, String timeRange, String xp, String rating, Color color) {
+  return Padding(
+    padding: EdgeInsets.only(bottom: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+    child: Row(
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+        Expanded(
+          child: Text(
+            timeRange,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        Text(
+          xp,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+        Text(
+          rating,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: color,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
   @override
   Widget build(BuildContext context) {
     final xp = userProfile?.xp ?? 0;
@@ -710,6 +764,8 @@ class XPProgressCard extends StatelessWidget {
     final xpNeededForNextLevel = levelProgress['requiredForNextLevel']!;
     final xpRemaining = levelProgress['remaining']!;
     final fontScale = ResponsiveUtils.getFontScale(context);
+
+    
 
     return Card(
       child: Padding(
@@ -733,6 +789,15 @@ class XPProgressCard extends StatelessWidget {
                   ),
                 ),
                 const Spacer(),
+                // Add this info button
+                IconButton(
+                  icon: Icon(
+                    Icons.info_outline,
+                    size: ResponsiveUtils.getIconSize(context, mobile: 18, tablet: 20, desktop: 22),
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: () => _showXPLegend(context),
+                ),
                 Text(
                   'Level $level',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
