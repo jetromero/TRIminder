@@ -30,19 +30,17 @@ class DatabaseService {
   Future<void> _createTables(Database db, int version) async {
     // User profiles table
     await db.execute('''
-      CREATE TABLE user_profiles (
-        id TEXT PRIMARY KEY,
-        username TEXT NOT NULL,
-        email TEXT NOT NULL,
-        department TEXT NOT NULL,
-        totalXP INTEGER NOT NULL DEFAULT 0,
-        level INTEGER NOT NULL DEFAULT 1,
-        dailyLikes INTEGER NOT NULL DEFAULT 0,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        isSynced INTEGER NOT NULL DEFAULT 0
-      )
-    ''');
+    CREATE TABLE user_profiles (
+      id TEXT PRIMARY KEY,
+      fullName TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL,
+      departmentId INTEGER,
+      xp INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      isSynced INTEGER NOT NULL DEFAULT 0
+    )
+  ''');
 
     // Screen time entries table
     await db.execute('''
@@ -94,6 +92,18 @@ class DatabaseService {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE xp_update_logs (
+        id INTEGER PRIMARY KEY,
+        userId TEXT NOT NULL,
+        xpToAdd INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        isSynced INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (userId) REFERENCES user_profiles (id)
+      )
+    ''');
+
     // Add performance indexes
     await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
     await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
@@ -132,6 +142,46 @@ class DatabaseService {
       profile.toMap(),
       where: 'id = ?',
       whereArgs: [profile.id],
+    );
+  }
+
+  // XP Update Log operations
+  Future<int> insertXPUpdateLog(XPUpdateLog xpUpdate) async {
+    final db = await database;
+    return await db.insert('xp_update_logs', xpUpdate.toMap());
+  }
+
+  Future<int> getPendingXPForUser(String userId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'xp_update_logs',
+      columns: ['xpToAdd'],
+      where: 'userId = ? AND isSynced = ?',
+      whereArgs: [userId, 0],
+    );
+    
+    return maps.fold<int>(0, (sum, map) => sum + (map['xpToAdd'] as int));
+  }
+  Future<List<XPUpdateLog>> getUnsyncedXPUpdates(String userId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'xp_update_logs',
+      where: 'userId = ? AND isSynced = ?',
+      whereArgs: [userId, 0],
+      orderBy: 'createdAt ASC',
+    );
+
+    return maps.map((map) => XPUpdateLog.fromMap(map)).toList();
+    
+  }
+
+  Future<void> markXPUpdateAsSynced(int xpUpdateId) async {
+    final db = await database;
+    await db.update(
+      'xp_update_logs',
+      {'isSynced': 1},
+      where: 'id = ?',
+      whereArgs: [xpUpdateId],
     );
   }
 

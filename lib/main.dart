@@ -28,9 +28,6 @@ void main() async {
   // Initialize persistent background tracking service
   await PersistentTrackerService.initialize();
   
-  // Start background service for continuous tracking
-  await PersistentTrackerService.startService();
-  
   // Note: Sync service will be initialized after user login
   
   runApp(const TRIminderApp());

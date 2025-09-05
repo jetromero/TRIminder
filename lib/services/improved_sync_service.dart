@@ -243,6 +243,31 @@ class ImprovedSyncService extends ChangeNotifier {
         }
       }
 
+      // Step 7: Sync XP updates
+      print('⭐ Syncing XP updates...');
+      final xpSyncSuccess = await _syncXPUpdates();
+      if (!xpSyncSuccess) {
+        print('⚠️ XP sync failed, but continuing with other sync operations');
+      }
+
+      // Step 8: Download and store user profile from Supabase
+      print('👤 Downloading user profile from Supabase...');
+      try {
+        final userProfile = await supabaseService.getUserProfile(userId);
+        if (userProfile != null) {
+          await db.insertUserProfile(userProfile);
+          print('✅ User profile downloaded and stored locally:');
+          print('   - Full Name: ${userProfile.fullName}');
+          print('   - XP: ${userProfile.xp}');
+          print('   - Email: ${userProfile.email}');
+        } else {
+          print('⚠️ No user profile found in Supabase');
+        }
+      } catch (e) {
+        print('❌ Error downloading user profile: $e');
+        // Don't fail the entire sync for profile download errors
+      }
+
       // Step 6: Update sync timestamps
       _lastCloudSync = now;
 
@@ -292,6 +317,13 @@ class ImprovedSyncService extends ChangeNotifier {
       final success = await _uploadLocalLogs(unsyncedLogs, db);
       if (success) {
         print('✅ Incremental sync: uploaded ${unsyncedLogs.length} entries');
+      }
+
+      // 3) Sync XP updates
+      print('⭐ Syncing XP updates...');
+      final xpSyncSuccess = await _syncXPUpdates();
+      if (!xpSyncSuccess) {
+        print('⚠️ XP sync failed, but continuing with other sync operations');
       }
       return success;
     } catch (e) {
@@ -444,4 +476,52 @@ class ImprovedSyncService extends ChangeNotifier {
     _syncErrors.clear();
     notifyListeners();
   }
+
+  /// Sync XP updates from local storage to Supabase
+  Future<bool> _syncXPUpdates() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return false;
+
+      final db = DatabaseService();
+      final unsyncedXPUpdates = await db.getUnsyncedXPUpdates(userId);
+      
+      if (unsyncedXPUpdates.isEmpty) {
+        print('📊 No unsynced XP updates');
+        return true;
+      }
+
+      // Get current user profile
+      final userProfile = await SupabaseService().getUserProfile(userId);
+      if (userProfile == null) return false;
+
+      // Calculate total XP to add
+      int totalXPToAdd = unsyncedXPUpdates.fold(0, (sum, update) => sum + update.xpToAdd);
+      
+      // Update profile with total XP
+      final updatedProfile = userProfile.copyWith(
+        xp: userProfile.xp + totalXPToAdd,
+      );
+      
+      final success = await SupabaseService().updateUserProfile(updatedProfile);
+
+      if (success != null) {
+        // ✅ Update local database with new XP
+        await db.updateUserProfile(updatedProfile);
+        
+        // Mark all XP updates as synced
+        for (final xpUpdate in unsyncedXPUpdates) {
+          await db.markXPUpdateAsSynced(xpUpdate.id);
+        }
+        print('✅ Synced ${unsyncedXPUpdates.length} XP updates: +$totalXPToAdd XP');
+        return true;
+      }
+      
+      return false;
+    } catch (e) {
+      print('❌ Error syncing XP updates: $e');
+      return false;
+    }
+  }
+  
 }

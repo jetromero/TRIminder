@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-// import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
-
+import '../models/user_models.dart';
 import '../services/persistent_tracker_service.dart';
 
 /// Automatic screen time tracker that detects phone screen state
@@ -244,16 +243,16 @@ class AutomaticScreenTracker extends ChangeNotifier {
     if (totalMinutes <= 120) {
       badges.add('Digital Sage'); // Ultra minimal
     } 
-    else if (totalMinutes <= 240) {
+    else if (totalMinutes <= 240 && totalMinutes > 120) {
       badges.add('Mindful Master'); // Excellent
     } 
-    else if (totalMinutes <= 360) {
+    else if (totalMinutes <= 360 && totalMinutes > 240) {
       badges.add('Balanced User'); // Very good
     } 
-    else if (totalMinutes <= 480) {
+    else if (totalMinutes <= 480 && totalMinutes > 360) {
       badges.add('Conscious User'); // Good
     } 
-    else if (totalMinutes <= 600) {
+    else if (totalMinutes <= 600 && totalMinutes > 480) {
       badges.add('Aware User'); // Okay
     }
     // No badges for excessive usage
@@ -265,19 +264,92 @@ class AutomaticScreenTracker extends ChangeNotifier {
   Future<void> _updateUserDailyXP(int xpToAward) async {
     try {
       final userId = SupabaseService().currentUserId;
-      if (userId == null) return;
+      if (userId == null) {
+        print('❌ Cannot update XP: No user ID available');
+        return;
+      }
 
-      final userProfile = await SupabaseService().getUserProfile(userId);
-      if (userProfile != null) {
-        // Award daily XP (only once per day)
-        final updatedProfile = userProfile.copyWith(
-          xp: userProfile.xp + xpToAward,
-        );
-        await SupabaseService().updateUserProfile(updatedProfile);
-        print('User XP updated: +$xpToAward (Total: ${updatedProfile.xp})');
+      if (xpToAward <= 0) {
+        print('❌ Cannot update XP: Invalid XP amount ($xpToAward)');
+        return;
+      }
+
+      // Check if we're online
+      final supabaseService = SupabaseService();
+      final isOnline = await supabaseService.isConnected();
+      
+      if (isOnline) {
+        // Online: Update both Supabase and local database
+        try {
+          final userProfile = await supabaseService.getUserProfile(userId);
+          if (userProfile == null) {
+            print('❌ Cannot update XP: User profile not found');
+            return;
+          }
+          
+          final updatedProfile = userProfile.copyWith(
+            xp: userProfile.xp + xpToAward,
+          );
+          
+          // Update Supabase
+          final supabaseSuccess = await supabaseService.updateUserProfile(updatedProfile);
+          
+          // Also update local database to keep them in sync
+          if (supabaseSuccess != null) {
+            try {
+              final db = DatabaseService();
+              await db.updateUserProfile(updatedProfile);
+              print('✅ User XP updated online: +$xpToAward (Total: ${updatedProfile.xp}) - Both Supabase and local DB updated');
+            } catch (localError) {
+              print('⚠️ Supabase updated but local DB failed: $localError');
+              // Still successful since Supabase was updated
+            }
+          } else {
+            print('⚠️ Failed to update XP in Supabase, storing locally for later sync');
+            // Fallback to offline storage if Supabase fails
+            await _storeXPUpdateLocally(userId, xpToAward);
+          }
+        } catch (onlineError) {
+          print('❌ Online XP update failed: $onlineError');
+          // Fallback to offline storage
+          await _storeXPUpdateLocally(userId, xpToAward);
+        }
+      } else {
+        // Offline: Store locally for later sync
+        await _storeXPUpdateLocally(userId, xpToAward);
       }
     } catch (e) {
-      print('Error updating user XP: $e');
+      print('❌ Critical error updating user XP: $e');
+      // Last resort: try to store locally even if everything else fails
+      try {
+        final userId = SupabaseService().currentUserId;
+        if (userId != null) {
+          await _storeXPUpdateLocally(userId, xpToAward);
+        }
+      } catch (fallbackError) {
+        print('❌ Even fallback XP storage failed: $fallbackError');
+      }
+    }
+  }
+
+  /// Helper method to store XP update locally
+  Future<void> _storeXPUpdateLocally(String userId, int xpToAward) async {
+    try {
+      final db = DatabaseService();
+      final xpUpdate = XPUpdateLog(
+        id: DateTime.now().microsecondsSinceEpoch,
+        userId: userId,
+        xpToAdd: xpToAward,
+        date: DateTime.now(),
+        createdAt: DateTime.now(),
+        isSynced: false,
+      );
+      
+      await db.insertXPUpdateLog(xpUpdate);
+      print('✅ XP update stored locally for sync: +$xpToAward');
+    } catch (e) {
+      print('❌ Failed to store XP update locally: $e');
+      rethrow; // Re-throw so caller knows it failed
     }
   }
 

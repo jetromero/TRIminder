@@ -13,6 +13,7 @@ import '../../widgets/sync_status_widget.dart';
 import '../../utils/debug_helper.dart';
 import '../../services/persistent_tracker_service.dart';
 import '../../services/first_time_setup_service.dart';
+import '../../services/database_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -284,7 +285,20 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     try {
       final userId = SupabaseService().currentUserId;
       if (userId != null) {
-        final profile = await SupabaseService().getUserProfile(userId);
+        UserProfile? profile;
+        
+        // Try Supabase first (when online)
+        if (!_isOffline) {
+          profile = await SupabaseService().getUserProfile(userId);
+        }
+        
+        // Fallback to local database (when offline or Supabase fails)
+        if (profile == null) {
+          final db = DatabaseService();
+          profile = await db.getUserProfile(userId);
+          print('📱 Loaded user profile from local database (offline mode)');
+        }
+        
         setState(() {
           userProfile = profile;
           isLoading = false;
@@ -668,11 +682,56 @@ class ScreenTimeCard extends StatelessWidget {
   }
 }
 
-class XPProgressCard extends StatelessWidget {
+class XPProgressCard extends StatefulWidget {
   final UserProfile? userProfile;
   
   const XPProgressCard({super.key, this.userProfile});
 
+  @override
+  State<XPProgressCard> createState() => _XPProgressCardState();
+}
+
+class _XPProgressCardState extends State<XPProgressCard> {
+  int? totalXP;
+  int? level;
+  double? progress;
+  Map<String, int>? levelProgress;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateXPData();
+  }
+
+  @override
+  void didUpdateWidget(XPProgressCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userProfile != widget.userProfile) {
+      _updateXPData();
+    }
+  }
+
+  Future<void> _updateXPData() async {
+    if (widget.userProfile == null) return;
+    
+    try {
+      final totalXPWithPending = await widget.userProfile!.getTotalXPWithPending();
+      final levelWithPending = await widget.userProfile!.getLevelWithPending();
+      final progressWithPending = await widget.userProfile!.getProgressToNextLevelWithPending();
+      final levelProgressWithPending = LevelCalculator.getCurrentLevelProgress(totalXPWithPending);
+      
+      if (mounted) {
+        setState(() {
+          totalXP = totalXPWithPending;
+          level = levelWithPending;
+          progress = progressWithPending;
+          levelProgress = levelProgressWithPending;
+        });
+      }
+    } catch (e) {
+      print('Error updating XP data: $e');
+    }
+  }
 
   void _showXPLegend(BuildContext context) {
     showDialog(
@@ -699,10 +758,10 @@ class XPProgressCard extends StatelessWidget {
             SizedBox(height: ResponsiveUtils.getSpacing(context)),
             _buildLegendItem(context, '≤2 hours', '100 XP', 'Excellent 🏆', Colors.green),
             _buildLegendItem(context, '2-4 hours', '75 XP', 'Great 🥇', Colors.lightGreen),
-            _buildLegendItem(context, '4-6 hours', '50 XP', 'Good 🥈', Colors.orange),
+            _buildLegendItem(context, '4-6 hours', '50 XP', 'Good ��', Colors.orange),
             _buildLegendItem(context, '6-8 hours', '25 XP', 'Fair 🥉', Colors.deepOrange),
             _buildLegendItem(context, '8-10 hours', '10 XP', 'High ⚠️', Colors.red),
-            _buildLegendItem(context, '10+ hours', '0 XP', 'Excessive 🚨', Colors.red.shade800),
+            _buildLegendItem(context, '10+ hours', '0 XP', 'Excessive ��', Colors.red.shade800),
           ],
         ),
         actions: [
@@ -715,57 +774,55 @@ class XPProgressCard extends StatelessWidget {
     );
   }
 
-Widget _buildLegendItem(BuildContext context, String timeRange, String xp, String rating, Color color) {
-  return Padding(
-    padding: EdgeInsets.only(bottom: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
-    child: Row(
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(6),
+  Widget _buildLegendItem(BuildContext context, String timeRange, String xp, String rating, Color color) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
+      child: Row(
+        children: [
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(6),
+            ),
           ),
-        ),
-        SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-        Expanded(
-          child: Text(
-            timeRange,
-            style: Theme.of(context).textTheme.bodySmall,
+          SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+          Expanded(
+            child: Text(
+              timeRange,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
-        ),
-        Text(
-          xp,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: color,
+          Text(
+            xp,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
-        ),
-        SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
-        Text(
-          rating,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: color,
+          SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+          Text(
+            rating,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: color,
+            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final xp = userProfile?.xp ?? 0;
-    final level = userProfile?.level ?? 1;
-    final progress = userProfile?.progressToNextLevel ?? 0.0;
-    final levelProgress = userProfile?.currentLevelProgress ?? {'currentLevelXP': 0, 'requiredForNextLevel': 100, 'remaining': 100};
-    final xpInCurrentLevel = levelProgress['currentLevelXP']!;
-    final xpNeededForNextLevel = levelProgress['requiredForNextLevel']!;
-    final xpRemaining = levelProgress['remaining']!;
+    final xp = totalXP ?? widget.userProfile?.xp ?? 0;
+    final currentLevel = level ?? widget.userProfile?.level ?? 1;
+    final currentProgress = progress ?? widget.userProfile?.progressToNextLevel ?? 0.0;
+    final currentLevelProgress = levelProgress ?? widget.userProfile?.currentLevelProgress ?? {'currentLevelXP': 0, 'requiredForNextLevel': 100, 'remaining': 100};
+    final xpInCurrentLevel = currentLevelProgress['currentLevelXP']!;
+    final xpNeededForNextLevel = currentLevelProgress['requiredForNextLevel']!;
+    final xpRemaining = currentLevelProgress['remaining']!;
     final fontScale = ResponsiveUtils.getFontScale(context);
-
-    
 
     return Card(
       child: Padding(
@@ -789,7 +846,6 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
                   ),
                 ),
                 const Spacer(),
-                // Add this info button
                 IconButton(
                   icon: Icon(
                     Icons.info_outline,
@@ -799,7 +855,7 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
                   onPressed: () => _showXPLegend(context),
                 ),
                 Text(
-                  'Level $level',
+                  'Level $currentLevel',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: Theme.of(context).colorScheme.primary,
@@ -809,7 +865,6 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
               ],
             ),
             SizedBox(height: ResponsiveUtils.getSpacing(context)),
-            // Make this responsive for different screen sizes
             context.isMobile 
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -820,7 +875,7 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
                     ),
                     SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)),
                     Text(
-                      'Level ${level + 1}',
+                      'Level ${currentLevel + 1}',
                       style: TextStyle(fontSize: 14 * fontScale),
                     ),
                   ],
@@ -833,14 +888,14 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
                     ),
                     const Spacer(),
                     Text(
-                      'Level ${level + 1}',
+                      'Level ${currentLevel + 1}',
                       style: TextStyle(fontSize: 14 * fontScale),
                     ),
                   ],
                 ),
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             LinearProgressIndicator(
-              value: progress.clamp(0.0, 1.0),
+              value: currentProgress.clamp(0.0, 1.0),
               backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
               valueColor: AlwaysStoppedAnimation<Color>(
                 Theme.of(context).colorScheme.primary,
@@ -852,7 +907,7 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
               xp == 0 
                 ? 'Start tracking to earn XP! Need ${LevelCalculator.getXPRequiredForLevel(1)} XP for Level 2' 
                 : xpRemaining > 0 
-                    ? '$xpRemaining XP to Level ${level + 1}'
+                    ? '$xpRemaining XP to Level ${currentLevel + 1}'
                     : 'Ready to level up!',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
@@ -864,7 +919,6 @@ Widget _buildLegendItem(BuildContext context, String timeRange, String xp, Strin
     );
   }
 }
-
 class RecentBadgesCard extends StatelessWidget {
   const RecentBadgesCard({super.key});
 

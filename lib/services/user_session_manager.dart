@@ -73,13 +73,15 @@ class UserSessionManager {
   /// Initialize services for the current user
   Future<void> _initializeUserServices(String userId) async {
     try {
+      // Start tracking services only after user authentication
+      print('🚀 Starting tracking services for authenticated user: $userId');
+      
+      // Start the background tracking service
+      await PersistentTrackerService.startService();
+      
       // Restart automatic screen tracker for new user
       final tracker = AutomaticScreenTracker();
       await tracker.startMonitoring();
-
-      // Ensure background service is tracking for correct user
-      // The PersistentTrackerService will pick up the new user ID from SupabaseService
-      await PersistentTrackerService.startService();
 
       // Initialize improved sync service and perform initial login sync
       await ImprovedSyncService().initialize();
@@ -89,6 +91,26 @@ class UserSessionManager {
       final syncSuccess = await ImprovedSyncService().performSync(showProgress: false, isInitialLogin: true);
       if (syncSuccess) {
         print('✅ Smart initial login sync completed');
+
+        // 📊 LOG USER XP FROM LOCAL DATABASE AFTER SYNC
+        try {
+          final db = DatabaseService();
+          final localProfile = await db.getUserProfile(userId);
+          if (localProfile != null) {
+            final totalXPWithPending = await localProfile.getTotalXPWithPending();
+            final levelWithPending = await localProfile.getLevelWithPending();
+            print('📊 LOCAL DATABASE XP AFTER SYNC:');
+            print('   - User ID: $userId');
+            print('   - Base XP: ${localProfile.xp}');
+            print('   - Total XP (with pending): $totalXPWithPending');
+            print('   - Level: $levelWithPending');
+            print('   - Profile synced: ${localProfile.isSynced}');
+          } else {
+            print('❌ No user profile found in local database after sync');
+          }
+        } catch (e) {
+          print('❌ Error logging XP from local database: $e');
+        }
       } else {
         print('⚠️ Smart initial login sync failed - will retry later');
       }
@@ -105,8 +127,9 @@ class UserSessionManager {
       // Stop automatic screen tracker
       AutomaticScreenTracker().stopMonitoring();
 
-      // Note: We don't stop PersistentTrackerService completely as it should
-      // continue running for the new user. It will automatically use the new user ID.
+      // Note: We don't stop PersistentTrackerService during user switching
+      // as it should continue running for the new user. It will automatically use the new user ID.
+      // Only stop it completely during logout (handled in logoutCurrentUser method).
 
       print('✅ User services stopped');
     } catch (e) {
@@ -158,13 +181,17 @@ class UserSessionManager {
       // 2. Stop services
       await _stopUserServices();
 
-      // 3. Clear UI state
+      // 3. Stop tracking services completely
+      await PersistentTrackerService.stopService();
+      print('🛑 Tracking services stopped after logout');
+
+      // 4. Clear UI state
       await _clearUIState();
 
-      // 4. Sign out from Supabase
+      // 5. Sign out from Supabase
       await SupabaseService().signOut();
 
-      // 5. Clear user session
+      // 6. Clear user session
       _previousUserId = _currentUserId;
       _currentUserId = null;
 

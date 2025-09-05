@@ -1,5 +1,5 @@
 import '../utils/level_calculator.dart';
-
+import '../services/database_service.dart';
 // User profile model matching Supabase profiles table
 class UserProfile {
   final String id;
@@ -95,6 +95,28 @@ class UserProfile {
     );
   }
 
+  // Add this method to UserProfile class
+  Future<int> getTotalXPWithPending() async {
+    try {
+      final db = DatabaseService();
+      final pendingXP = await db.getPendingXPForUser(this.id);
+      return this.xp + pendingXP;
+    } catch (e) {
+      print('Error getting pending XP: $e');
+      return this.xp; // Fallback to current XP
+    }
+  }
+
+  Future<int> getLevelWithPending() async {
+    final totalXP = await getTotalXPWithPending();
+    return LevelCalculator.getLevel(totalXP);
+  }
+
+  Future<double> getProgressToNextLevelWithPending() async {
+    final totalXP = await getTotalXPWithPending();
+    return LevelCalculator.getProgressToNextLevel(totalXP);
+  }
+
   // Convenience getters for level calculations
   int get level => LevelCalculator.getLevel(xp);
   
@@ -103,6 +125,89 @@ class UserProfile {
   Map<String, int> get currentLevelProgress => LevelCalculator.getCurrentLevelProgress(xp);
   
   int get xpRemainingToNextLevel => LevelCalculator.getXPRemainingToNextLevel(xp);
+}
+
+// Add this at the end of lib/models/user_models.dart (after line 201)
+
+// XP update log for offline storage
+class XPUpdateLog {
+  final int id;
+  final String userId;
+  final int xpToAdd;
+  final DateTime date;
+  final DateTime createdAt;
+  final bool isSynced;
+
+  XPUpdateLog({
+    required this.id,
+    required this.userId,
+    required this.xpToAdd,
+    required this.date,
+    required this.createdAt,
+    this.isSynced = false,
+  });
+
+  XPUpdateLog copyWith({
+    int? id,
+    String? userId,
+    int? xpToAdd,
+    DateTime? date,
+    DateTime? createdAt,
+    bool? isSynced,
+  }) {
+    return XPUpdateLog(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      xpToAdd: xpToAdd ?? this.xpToAdd,
+      date: date ?? this.date,
+      createdAt: createdAt ?? this.createdAt,
+      isSynced: isSynced ?? this.isSynced,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'userId': userId,
+      'xpToAdd': xpToAdd,
+      'date': date.toIso8601String(),
+      'createdAt': createdAt.toIso8601String(),
+      'isSynced': isSynced ? 1 : 0,
+    };
+  }
+
+  factory XPUpdateLog.fromMap(Map<String, dynamic> map) {
+    return XPUpdateLog(
+      id: map['id'],
+      userId: map['userId'],
+      xpToAdd: map['xpToAdd'],
+      date: DateTime.parse(map['date']),
+      createdAt: DateTime.parse(map['createdAt']),
+      isSynced: map['isSynced'] == 1,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'user_id': userId,
+      'xp_to_add': xpToAdd,
+      'date': date.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
+      'is_synced': isSynced,
+    };
+  }
+
+  factory XPUpdateLog.fromJson(Map<String, dynamic> json) {
+    return XPUpdateLog(
+      id: json['id'],
+      userId: json['user_id'],
+      xpToAdd: json['xp_to_add'],
+      date: DateTime.parse(json['date']),
+      createdAt: DateTime.parse(json['created_at']),
+      isSynced: json['is_synced'] ?? false,
+    );
+  }
 }
 
 // Screen time log model matching Supabase screen_time_logs table

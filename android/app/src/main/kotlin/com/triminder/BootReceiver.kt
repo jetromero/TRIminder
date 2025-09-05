@@ -41,11 +41,11 @@ class BootReceiver : BroadcastReceiver() {
     }
     
     /**
-     * Start the TRIminder background tracking service
-     */
+    * Start the TRIminder background tracking service (only if user is authenticated)
+    */
     private fun startTrackingService(context: Context) {
         try {
-            Log.d(TAG, "🚀 Attempting to start background tracking service")
+            Log.d(TAG, "🚀 Checking if user is authenticated before starting tracking")
             
             // Create Flutter engine for background execution
             val flutterEngine = FlutterEngine(context)
@@ -55,28 +55,28 @@ class BootReceiver : BroadcastReceiver() {
                 DartExecutor.DartEntrypoint.createDefault()
             )
             
-            // Send message to Flutter to start tracking
+            // Send message to Flutter to check authentication and start tracking if authenticated
             val channel = MethodChannel(
                 flutterEngine.dartExecutor.binaryMessenger,
                 CHANNEL
             )
             
-            channel.invokeMethod("startBackgroundTracking", null, object : MethodChannel.Result {
+            channel.invokeMethod("checkAuthAndStartTracking", null, object : MethodChannel.Result {
                 override fun success(result: Any?) {
-                    Log.i(TAG, "✅ Background tracking started successfully")
+                    Log.i(TAG, "✅ Authentication check completed: $result")
                 }
                 
                 override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                    Log.e(TAG, "❌ Failed to start tracking: $errorCode - $errorMessage")
+                    Log.e(TAG, "❌ Failed to check authentication: $errorCode - $errorMessage")
                 }
                 
                 override fun notImplemented() {
-                    Log.w(TAG, "⚠️ Background tracking method not implemented")
+                    Log.w(TAG, "⚠️ Authentication check method not implemented")
                 }
             })
             
         } catch (e: Exception) {
-            Log.e(TAG, "💥 Exception starting tracking service", e)
+            Log.e(TAG, "�� Exception checking authentication", e)
         }
     }
 }

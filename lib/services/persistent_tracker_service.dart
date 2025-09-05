@@ -186,6 +186,25 @@ class PersistentTrackerService {
     }
   }
 
+  /// Check if user is authenticated and start tracking if so
+  static Future<bool> checkAuthAndStartTracking() async {
+    try {
+      // Check if there's an authenticated user
+      final userId = SupabaseService().currentUserId;
+      
+      if (userId != null && userId.isNotEmpty) {
+        print('✅ User authenticated ($userId) - starting tracking');
+        return await startService();
+      } else {
+        print('⚠️ No authenticated user found - skipping tracking startup');
+        return false;
+      }
+    } catch (e) {
+      print('❌ Error checking authentication: $e');
+      return false;
+    }
+  }
+
   /// Stop the background tracking service
   static Future<void> stopService() async {
     try {
@@ -553,7 +572,37 @@ class PersistentTrackerService {
           serviceData.todayScreenTime = 0;
           
           await _loadTodayScreenTime(serviceData);
+
+          // NEW CODE TO ADD - Save any remaining staged sessions from yesterday
+          try {
+            final userId = SupabaseService().currentUserId;
+            if (userId != null) {
+              final yesterday = now.subtract(const Duration(days: 1));
+              final staged = await _loadStaged(userId, yesterday);
+              final accumSeconds = staged['accumSeconds'] as int;
+              
+              if (accumSeconds > 0) {
+                final stagedStartIso = staged['startIso'] as String?;
+                final stagedLastEndIso = staged['lastEndIso'] as String?;
+                
+                if (stagedStartIso != null && stagedLastEndIso != null) {
+                  final DateTime aggStart = DateTime.parse(stagedStartIso);
+                  final DateTime aggEnd = DateTime.parse(stagedLastEndIso);
+                  final int savedMinutes = await _savePossiblySplitSession(aggStart, aggEnd);
+                  print('📅 Saved yesterday staged session: ${(accumSeconds/60).round()}m → saved ${savedMinutes}m');
+                }
+                
+                // Clear the old staged data
+                await _clearStaged(userId, yesterday);
+                print('🧹 Cleared yesterday staged data');
+              }
+            }
+          } catch (e) {
+            print('❌ Error saving yesterday staged sessions: $e');
+          }
         }
+
+        
 
         
 
@@ -690,6 +739,7 @@ class PersistentTrackerService {
       serviceData.todayScreenTime = 0;
     }
   }
+
 
   /// Handle screen state events in background
   @pragma('vm:entry-point')
