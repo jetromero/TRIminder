@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 import '../models/user_models.dart';
 import '../services/persistent_tracker_service.dart';
+import '../utils/simplified_logger.dart';
 
 /// Automatic screen time tracker that detects phone screen state
 /// Tracks screen ON/OFF events and calculates daily usage
@@ -52,12 +52,12 @@ class AutomaticScreenTracker extends ChangeNotifier {
       _isMonitoring = true;
       await _loadTodayData();
       
-      print('Automatic screen monitoring started (display mode)');
+      SimplifiedLogger.service('Screen monitoring started (display mode)');
       notifyListeners();
       return true;
       
     } catch (e) {
-      print('Failed to start screen monitoring: $e');
+      SimplifiedLogger.error('Failed to start screen monitoring: $e');
       return false;
     }
   }
@@ -67,30 +67,11 @@ class AutomaticScreenTracker extends ChangeNotifier {
     if (!_isMonitoring) return;
 
     _isMonitoring = false;
-    print('Automatic screen monitoring stopped');
+    SimplifiedLogger.service('Screen monitoring stopped');
     notifyListeners();
   }
 
   // Note: Screen state monitoring methods removed - handled by PersistentTrackerService
-
-
-
-  /// Reset current session (when screen turns off or app goes to background)
-  void resetCurrentSession() {
-    _currentSessionStart = null;
-    _currentSessionMinutes = 0;
-    _updateRealTimeTodayTotal(); // Update total to show only database data
-    notifyListeners();
-    print('Current session reset');
-  }
-
-  /// Start new session (when screen turns on or app comes to foreground)
-  void startNewSession() {
-    // Don't automatically start a new session - let PersistentTrackerService handle it
-    // Just refresh the data to show current state
-    refreshTodayData();
-    print('Session display refreshed - letting background service handle actual tracking');
-  }
 
   Future<int> _getStagedMinutes() async {
     try {
@@ -99,7 +80,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
         return await PersistentTrackerService.getStagedMinutesForToday(userId);
       }
     } catch (e) {
-      print('❌ Error getting staged minutes: $e');
+      SimplifiedLogger.error('Error getting staged minutes: $e');
     }
     return 0;
   }
@@ -109,10 +90,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   final stagedMinutes = await _getStagedMinutes();
   _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes + stagedMinutes;
   
-  print("🔍 _currentSessionMinutes: $_currentSessionMinutes");
-  print("🔍 Staged minutes: $stagedMinutes");
-  print("🔍 Total: $_todayScreenTimeMinutes");
-  
+  SimplifiedLogger.verbose("Current session: ${_currentSessionMinutes}m, Staged: ${stagedMinutes}m, Total: ${_todayScreenTimeMinutes}m");
     
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
@@ -120,7 +98,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
     
     // Notify listeners since this updates the main display data
-    print('📊 AutomaticScreenTracker: Updating total to ${_todayScreenTimeMinutes}m, notifying listeners');
+    SimplifiedLogger.screenTime('Total updated: ${_todayScreenTimeMinutes}m');
     notifyListeners();
   }
 
@@ -135,7 +113,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Check for badges
     _todayBadges = _getDailyBadges(_todayScreenTimeMinutes);
     
-    print('📊 AutomaticScreenTracker: Notifying listeners of data update');
+    SimplifiedLogger.verbose('Notifying listeners of data update');
     notifyListeners();
   }
 
@@ -200,11 +178,11 @@ class AutomaticScreenTracker extends ChangeNotifier {
           await _updateUserDailyXP(finalXP);
           _lastXPAwardDate = date;
           
-          print('End-of-day XP awarded for ${date.toLocal()}: $finalXP XP for ${dayScreenTimeMinutes}m screen time');
+          SimplifiedLogger.xp('End-of-day XP awarded: $finalXP XP for ${dayScreenTimeMinutes}m screen time');
         }
       }
     } catch (e) {
-      print('Error awarding end-of-day XP: $e');
+      SimplifiedLogger.error('Error awarding end-of-day XP: $e');
     }
   }
 
@@ -265,12 +243,12 @@ class AutomaticScreenTracker extends ChangeNotifier {
     try {
       final userId = SupabaseService().currentUserId;
       if (userId == null) {
-        print('❌ Cannot update XP: No user ID available');
+        SimplifiedLogger.error('Cannot update XP: No user ID available');
         return;
       }
 
       if (xpToAward <= 0) {
-        print('❌ Cannot update XP: Invalid XP amount ($xpToAward)');
+        SimplifiedLogger.error('Cannot update XP: Invalid XP amount ($xpToAward)');
         return;
       }
 
@@ -283,7 +261,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
         try {
           final userProfile = await supabaseService.getUserProfile(userId);
           if (userProfile == null) {
-            print('❌ Cannot update XP: User profile not found');
+            SimplifiedLogger.error('Cannot update XP: User profile not found');
             return;
           }
           
@@ -299,18 +277,18 @@ class AutomaticScreenTracker extends ChangeNotifier {
             try {
               final db = DatabaseService();
               await db.updateUserProfile(updatedProfile);
-              print('✅ User XP updated online: +$xpToAward (Total: ${updatedProfile.xp}) - Both Supabase and local DB updated');
+              SimplifiedLogger.xp('User XP updated online: +$xpToAward (Total: ${updatedProfile.xp})');
             } catch (localError) {
-              print('⚠️ Supabase updated but local DB failed: $localError');
+              SimplifiedLogger.warning('Supabase updated but local DB failed: $localError');
               // Still successful since Supabase was updated
             }
           } else {
-            print('⚠️ Failed to update XP in Supabase, storing locally for later sync');
+            SimplifiedLogger.warning('Failed to update XP in Supabase, storing locally for later sync');
             // Fallback to offline storage if Supabase fails
             await _storeXPUpdateLocally(userId, xpToAward);
           }
         } catch (onlineError) {
-          print('❌ Online XP update failed: $onlineError');
+          SimplifiedLogger.error('Online XP update failed: $onlineError');
           // Fallback to offline storage
           await _storeXPUpdateLocally(userId, xpToAward);
         }
@@ -319,7 +297,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
         await _storeXPUpdateLocally(userId, xpToAward);
       }
     } catch (e) {
-      print('❌ Critical error updating user XP: $e');
+      SimplifiedLogger.error('Critical error updating user XP: $e');
       // Last resort: try to store locally even if everything else fails
       try {
         final userId = SupabaseService().currentUserId;
@@ -327,7 +305,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
           await _storeXPUpdateLocally(userId, xpToAward);
         }
       } catch (fallbackError) {
-        print('❌ Even fallback XP storage failed: $fallbackError');
+        SimplifiedLogger.error('Even fallback XP storage failed: $fallbackError');
       }
     }
   }
@@ -346,9 +324,9 @@ class AutomaticScreenTracker extends ChangeNotifier {
       );
       
       await db.insertXPUpdateLog(xpUpdate);
-      print('✅ XP update stored locally for sync: +$xpToAward');
+      SimplifiedLogger.xp('XP update stored locally for sync: +$xpToAward');
     } catch (e) {
-      print('❌ Failed to store XP update locally: $e');
+      SimplifiedLogger.error('Failed to store XP update locally: $e');
       rethrow; // Re-throw so caller knows it failed
     }
   }
@@ -358,7 +336,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     try {
       final userId = SupabaseService().currentUserId;
       if (userId == null) {
-        print('No user ID available for loading screen time data');
+        SimplifiedLogger.warning('No user ID available for loading screen time data');
         return;
       }
 
@@ -373,16 +351,11 @@ class AutomaticScreenTracker extends ChangeNotifier {
         endOfDay
       );
 
-      print('🔍 Dashboard debug:');
-      print('   - User ID: $userId');
-      print('   - Date range: ${startOfDay.toIso8601String()} to ${endOfDay.toIso8601String()}');
-      print('   - Found ${todayLogs.length} logs');
-
-      print('Loaded ${todayLogs.length} screen time entries for today');
+      SimplifiedLogger.verbose('Dashboard debug: User: $userId, Found ${todayLogs.length} logs');
       
-      // Debug: Print all entries
+      // Debug: Print all entries (verbose only)
       for (final log in todayLogs) {
-        print('Entry: ${log.userId} - ${log.durationMinutes}m at ${log.startTime}');
+        SimplifiedLogger.verbose('Entry: ${log.durationMinutes}m at ${log.startTime}');
       }
 
       // Store database total separately (without current session)
@@ -393,21 +366,18 @@ class AutomaticScreenTracker extends ChangeNotifier {
       // Update real-time total (database + current session)
       _updateRealTimeTodayTotal();
 
-      print('Database screen time for today: $_todayScreenTimeFromDatabase minutes');
-      print('Current session minutes: $_currentSessionMinutes minutes');
-      print('Real-time total screen time: $_todayScreenTimeMinutes minutes (including current session)');
-      print('Formatted display: ${_formatDuration(_todayScreenTimeMinutes)}');
+      SimplifiedLogger.screenTime('Today: ${_formatDuration(_todayScreenTimeMinutes)} (DB: ${_todayScreenTimeFromDatabase}m, Session: ${_currentSessionMinutes}m)');
 
       await _updateDailyStatsDisplay();
 
     } catch (e) {
-      print('Error loading today data: $e');
+      SimplifiedLogger.error('Error loading today data: $e');
     }
   }
 
   /// Refresh today's data (call periodically to sync with background service)
   Future<void> refreshTodayData() async {
-    print('🔄 AutomaticScreenTracker: refreshTodayData() called');
+    SimplifiedLogger.verbose('refreshTodayData() called');
     
     // Load fresh data from database first
     await _loadTodayData();
@@ -419,13 +389,13 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Update the total to show database + live session
     _updateRealTimeTodayTotal();
     
-    print('🔄 AutomaticScreenTracker: refreshTodayData() completed, notifying listeners');
+    SimplifiedLogger.verbose('refreshTodayData() completed');
     notifyListeners();
   }
 
   /// Force refresh after sync completion (call after successful sync)
   Future<void> forceRefreshAfterSync() async {
-    print('🔄 AutomaticScreenTracker: forceRefreshAfterSync() called');
+    SimplifiedLogger.verbose('forceRefreshAfterSync() called');
     
     // Clear any cached data
     _todayScreenTimeFromDatabase = 0;
@@ -440,7 +410,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Update totals
     _updateRealTimeTodayTotal();
     
-    print('🔄 AutomaticScreenTracker: forceRefreshAfterSync() completed, notifying listeners');
+    SimplifiedLogger.verbose('forceRefreshAfterSync() completed');
     notifyListeners();
   }
 
@@ -451,93 +421,29 @@ Future<void> _syncCurrentSessionFromBackground() async {
     // Get session data directly from background service (same as notification)
     final sessionData = await PersistentTrackerService.getCurrentSessionData();
     
-    print('🔍 DEBUG: Background service session data: $sessionData');
+    SimplifiedLogger.verbose('Background service session data: $sessionData');
     
     final hasActiveSession = sessionData['hasActiveSession'] ?? false;
     final sessionStartTimeMs = sessionData['sessionStartTime'];
     final currentMinutes = sessionData['currentMinutes'] ?? 0;
-    final todayTotal = sessionData['todayTotal'] ?? 0;
-    final timestamp = sessionData['timestamp'];
-    
-    print('🔍 DEBUG: Background service values:');
-    print('   - hasActiveSession: $hasActiveSession');
-    print('   - sessionStartTime: $sessionStartTimeMs');
-    print('   - currentMinutes: $currentMinutes');
-    print('   - todayTotal: $todayTotal');
-    print("   - Timestamp: $timestamp");
 
-
-    bool assignedFromService = false;
+    // Use background service data directly - no fallback needed
     if (hasActiveSession && sessionStartTimeMs != null) {
       _currentSessionStart = DateTime.fromMillisecondsSinceEpoch(sessionStartTimeMs);
       _currentSessionMinutes = currentMinutes;
-      assignedFromService = true;
-      print('📱 Found active session via background service: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
-    }
-
-    // Fallback to SharedPreferences-staged session if service not available or reported none
-    if (!assignedFromService) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final bool prefActive = prefs.getBool('has_active_session') ?? false;
-        final int? startMs = prefs.getInt('session_start_time');
-        final int prefMinutes = prefs.getInt('current_session_minutes') ?? 0;
-
-        if (prefActive && startMs != null) {
-          final DateTime start = DateTime.fromMillisecondsSinceEpoch(startMs);
-          final int liveMinutes = DateTime.now().difference(start).inMinutes;
-          _currentSessionStart = start;
-          _currentSessionMinutes = liveMinutes >= prefMinutes ? liveMinutes : prefMinutes;
-          print('📱 Fallback from SharedPreferences: ${_currentSessionMinutes}m (started at ${start.toLocal()})');
-        } else {
-          _currentSessionStart = null;
-          _currentSessionMinutes = 0;
-          print('📱 No active session via SharedPreferences fallback (active=$prefActive)');
-        }
-      } catch (e) {
-        print('❌ Error reading SharedPreferences for session fallback: $e');
-        _currentSessionStart = null;
-        _currentSessionMinutes = 0;
-      }
-    }
-  } catch (e) {
-    print('❌ Error syncing session from background service: $e');
-    // Final fallback to SharedPreferences on channel errors
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final bool prefActive = prefs.getBool('has_active_session') ?? false;
-      final int? startMs = prefs.getInt('session_start_time');
-      final int prefMinutes = prefs.getInt('current_session_minutes') ?? 0;
-      if (prefActive && startMs != null) {
-        final DateTime start = DateTime.fromMillisecondsSinceEpoch(startMs);
-        final int liveMinutes = DateTime.now().difference(start).inMinutes;
-        _currentSessionStart = start;
-        _currentSessionMinutes = liveMinutes >= prefMinutes ? liveMinutes : prefMinutes;
-        print('📱 Fallback from SharedPreferences after error: ${_currentSessionMinutes}m (started at ${start.toLocal()})');
-      } else {
-        _currentSessionStart = null;
-        _currentSessionMinutes = 0;
-      }
-    } catch (_) {
-      _currentSessionStart = null;
-      _currentSessionMinutes = 0;
-    }
-  }
-}
-
-  /// Sync current session state from background service
-  void syncCurrentSessionState(DateTime? sessionStartTime) {
-    if (sessionStartTime != null) {
-      _currentSessionStart = sessionStartTime;
-      final now = DateTime.now();
-      _currentSessionMinutes = now.difference(sessionStartTime).inMinutes;
-      _updateRealTimeTodayTotal();
+      SimplifiedLogger.session('Active session: ${currentMinutes}m (started at ${_currentSessionStart!.toLocal()})');
     } else {
       _currentSessionStart = null;
       _currentSessionMinutes = 0;
-      _updateRealTimeTodayTotal();
+      SimplifiedLogger.verbose('No active session from background service');
     }
+  } catch (e) {
+    SimplifiedLogger.error('Error syncing session from background service: $e');
+    // If background service fails, clear session data
+    _currentSessionStart = null;
+    _currentSessionMinutes = 0;
   }
+}
 
   /// Format duration in minutes
   String _formatDuration(int minutes) {

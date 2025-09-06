@@ -11,6 +11,7 @@ import '../models/user_models.dart';
 import '../services/database_service.dart';
 import '../services/supabase_service.dart';
 import '../services/improved_sync_service.dart';
+import '../utils/simplified_logger.dart';
 
 
 /// Data wrapper class for service variables (enables reference passing)
@@ -62,7 +63,7 @@ class PersistentTrackerService {
       final staged = await _loadStaged(userId, today);
       return (staged['accumSeconds'] as int) ~/ 60; // Convert seconds to minutes
     } catch (e) {
-      print('❌ Error getting staged minutes: $e');
+      SimplifiedLogger.error('Error getting staged minutes: $e');
       return 0;
     }
   }
@@ -89,15 +90,15 @@ class PersistentTrackerService {
   static Future<int> _saveSessionRounded(DateTime start, DateTime end) async {
     final int seconds = end.difference(start).inSeconds;
     if (seconds < _minSessionSeconds) {
-      print('🪙 Session below threshold (${seconds}s < ${_minSessionSeconds}s) - skipped');
+      SimplifiedLogger.verbose('Session below threshold (${seconds}s < ${_minSessionSeconds}s) - skipped');
       return 0;
     }
     final int minutes = _roundSecondsToMinutesNearest(seconds);
     if (minutes > 0) {
       await _saveSession(start, end, minutes);
-      print('💾 Saved session: ${minutes}m (${seconds}s)');
+      SimplifiedLogger.database('Saved session: ${minutes}m (${seconds}s)');
     } else {
-      print('⚠️ Session too short after rounding (${seconds}s) - skipped');
+      SimplifiedLogger.verbose('Session too short after rounding (${seconds}s) - skipped');
     }
     return minutes;
   }
@@ -129,7 +130,7 @@ class PersistentTrackerService {
       // Request necessary permissions
       final hasPermissions = await _requestPermissions();
       if (!hasPermissions) {
-        print('❌ Required permissions not granted');
+        SimplifiedLogger.error('Required permissions not granted');
         return false;
       }
 
@@ -153,11 +154,11 @@ class PersistentTrackerService {
       );
 
       _isInitialized = true;
-      print('✅ Persistent tracker service initialized');
+      SimplifiedLogger.success('Persistent tracker service initialized');
       return true;
 
     } catch (e) {
-      print('❌ Failed to initialize persistent service: $e');
+      SimplifiedLogger.error('Failed to initialize persistent service: $e');
       return false;
     }
   }
@@ -172,16 +173,16 @@ class PersistentTrackerService {
 
       final isRunning = await FlutterBackgroundService().isRunning();
       if (isRunning) {
-        print('⚡ Service already running');
+        SimplifiedLogger.service('Service already running');
         return true;
       }
 
       await FlutterBackgroundService().startService();
-      print('🚀 Background service started');
+      SimplifiedLogger.service('Background service started');
       return true;
 
     } catch (e) {
-      print('❌ Failed to start service: $e');
+      SimplifiedLogger.error('Failed to start service: $e');
       return false;
     }
   }
@@ -193,14 +194,14 @@ class PersistentTrackerService {
       final userId = SupabaseService().currentUserId;
       
       if (userId != null && userId.isNotEmpty) {
-        print('✅ User authenticated ($userId) - starting tracking');
+        SimplifiedLogger.user('User authenticated - starting tracking');
         return await startService();
       } else {
-        print('⚠️ No authenticated user found - skipping tracking startup');
+        SimplifiedLogger.warning('No authenticated user found - skipping tracking startup');
         return false;
       }
     } catch (e) {
-      print('❌ Error checking authentication: $e');
+      SimplifiedLogger.error('Error checking authentication: $e');
       return false;
     }
   }
@@ -213,10 +214,10 @@ class PersistentTrackerService {
       
       if (isRunning) {
         service.invoke('stop');
-        print('⏹️ Background service stopped');
+        SimplifiedLogger.service('Background service stopped');
       }
     } catch (e) {
-      print('❌ Failed to stop service: $e');
+      SimplifiedLogger.error('Failed to stop service: $e');
     }
   }
 
@@ -238,12 +239,12 @@ class PersistentTrackerService {
       if (isRunning) {
         // Send message to background service to reload data
         service.invoke('reload_today_data');
-        print('📊 Sent reload command to background service');
+        SimplifiedLogger.verbose('Sent reload command to background service');
       } else {
-        print('⚠️ Background service is not running!');
+        SimplifiedLogger.warning('Background service is not running!');
       }
     } catch (e) {
-      print('❌ Error sending reload command: $e');
+      SimplifiedLogger.error('Error sending reload command: $e');
     }
   }
 
@@ -256,14 +257,14 @@ class PersistentTrackerService {
       if (isRunning) {
         // Send status request to background service
         service.invoke('get_status');
-        print('📊 Sent status request to background service');
+        SimplifiedLogger.verbose('Sent status request to background service');
         return {'running': true, 'message': 'Service is running'};
       } else {
-        print('⚠️ Background service is not running!');
+        SimplifiedLogger.warning('Background service is not running!');
         return {'running': false, 'message': 'Service stopped'};
       }
     } catch (e) {
-      print('❌ Error checking service status: $e');
+      SimplifiedLogger.error('Error checking service status: $e');
       return {'running': false, 'error': e.toString()};
     }
   }
@@ -273,7 +274,7 @@ class PersistentTrackerService {
     try {
       final service = FlutterBackgroundService();
       final isRunning = await service.isRunning();
-      print("🔍 getCurrentSessionData: isRunning: $isRunning");
+      SimplifiedLogger.verbose("getCurrentSessionData: isRunning: $isRunning");
       
       if (!isRunning) {
         return {
@@ -297,13 +298,13 @@ class PersistentTrackerService {
           
           if (data != null && data['requestId'] == requestId) {
             completer.complete(Map<String, dynamic>.from(data));
-            print("🔍 data: ${data}");
+            SimplifiedLogger.verbose("Session data received: ${data}");
           }
         });
         
         // Send request with unique ID
         service.invoke('get_session_data', {'requestId': requestId});
-        print("🔍 requestId: $requestId");
+        SimplifiedLogger.verbose("Request ID: $requestId");
         
         // Wait for response with longer timeout
         final result = await completer.future.timeout(
@@ -325,7 +326,7 @@ class PersistentTrackerService {
       }
       
     } catch (e) {
-      print('❌ Error getting session data from service: $e');
+      SimplifiedLogger.error('Error getting session data from service: $e');
       return {
         'hasActiveSession': false,
         'sessionStartTime': null,
@@ -469,8 +470,9 @@ class PersistentTrackerService {
     }
 
     // Periodic tasks (every 3 seconds) - for real-time updates
-    Timer.periodic(const Duration(seconds: 3), (timer) async {
+    Timer.periodic(const Duration(minutes: 1), (timer) async {
       try {
+
         // Reload today's total from DB
         await _loadTodayScreenTime(serviceData);
 

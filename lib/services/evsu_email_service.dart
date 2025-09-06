@@ -87,7 +87,6 @@ class EVSUEmailService {
       // If we can't check, allow the signup to proceed
       print('Warning: Could not verify email uniqueness: $e');
     }
-    
     return null; // No errors
   }
 

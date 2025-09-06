@@ -14,9 +14,11 @@ import '../../utils/debug_helper.dart';
 import '../../services/persistent_tracker_service.dart';
 import '../../services/first_time_setup_service.dart';
 import '../../services/database_service.dart';
+import '../../utils/simplified_logger.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final bool isNewUser;
+  const HomeScreen({super.key, this.isNewUser = false});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -24,12 +26,19 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  bool _isNewUser = false;
 
-  final List<Widget> _screens = [
-    const DashboardTab(),
+  List<Widget> get _screens => [
+    DashboardTab(isNewUser: _isNewUser),
     const RankingsTab(),
     const ProfileTab(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _isNewUser = widget.isNewUser;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +71,8 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class DashboardTab extends StatefulWidget {
-  const DashboardTab({super.key});
+  final bool isNewUser;
+  const DashboardTab({super.key, this.isNewUser = false});
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
@@ -91,11 +101,11 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   /// Set up sync completion callback
   void _setupSyncCallback() {
     ImprovedSyncService().setSyncCompleteCallback(() {
-      print('🔄 Sync completed - triggering UI update only');
+      SimplifiedLogger.sync('Sync completed - triggering UI update only');
       // Just update UI state, don't trigger another full refresh
       if (mounted) {
         setState(() {});
-        print('🔄 UI updated after sync completion');
+        SimplifiedLogger.verbose('UI updated after sync completion');
       }
     });
   }
@@ -142,10 +152,10 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   void _startRefreshTimer() {
     // Adjust interval based on connectivity
-    final interval = _isOffline ? Duration(seconds: 30) : Duration(seconds: 3);
-    print('⏰ Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
+    final interval = _isOffline ? Duration(seconds: 30) : Duration(minutes: 1);
+    SimplifiedLogger.info('Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
     _refreshTimer = Timer.periodic(interval, (_) {
-      print('⏰ ${interval.inSeconds}-second refresh tick triggered');
+      SimplifiedLogger.verbose('${interval.inSeconds}-second refresh tick triggered');
       _onRefreshTick();
     });
   }
@@ -316,7 +326,10 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     return [
       
       // Welcome Section
-      WelcomeCard(userProfile: userProfile),
+      WelcomeCard(
+        userProfile: userProfile,
+        isNewUser: widget.isNewUser,
+      ),
       
       // Automatic Screen Time Tracker  
       const AutomaticTrackerDisplay(),
@@ -563,8 +576,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
 class WelcomeCard extends StatelessWidget {
   final UserProfile? userProfile;
+  final bool isNewUser;
   
-  const WelcomeCard({super.key, this.userProfile});
+  const WelcomeCard({super.key, this.userProfile, this.isNewUser = false});
 
   @override
   Widget build(BuildContext context) {
@@ -577,7 +591,9 @@ class WelcomeCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Welcome back, ${userProfile?.fullName ?? 'Student'}!',
+              isNewUser 
+              ? 'Welcome to TRIminder, ${userProfile?.fullName ?? 'Student'}!'
+              : 'Welcome back, ${userProfile?.fullName ?? 'Student'}!',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.bold,
                 fontSize: (Theme.of(context).textTheme.headlineSmall?.fontSize ?? 24) * fontScale,
@@ -585,7 +601,9 @@ class WelcomeCard extends StatelessWidget {
             ),
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             Text(
-              'Ready to continue your digital wellness journey?',
+              isNewUser
+              ? 'Let\'s start your digital wellness journey!'
+              : 'Ready to continue your digital wellness journey?',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,

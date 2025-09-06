@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../dashboard/home_screen.dart';
 import '../../services/supabase_service.dart';
 import '../../services/evsu_email_service.dart';
@@ -64,13 +65,16 @@ class _SignupScreenState extends State<SignupScreen> {
       _isValidatingEmail = true;
     });
     
-    String? error = await EVSUEmailService.validateEmailForSignup(email);
-    
-    setState(() {
-      _isValidatingEmail = false;
-    });
-    
-    return error;
+    try {
+      String? error = await EVSUEmailService.validateEmailForSignup(email);
+      return error;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isValidatingEmail = false;
+        });
+      }
+    }
   }
 
   Future<void> _signup() async {
@@ -89,12 +93,14 @@ class _SignupScreenState extends State<SignupScreen> {
     // Final email validation before signup
     String? emailError = await _validateEmailAsync(_emailController.text);
     if (emailError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(emailError),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(emailError),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
       return;
     }
 
@@ -113,15 +119,20 @@ class _SignupScreenState extends State<SignupScreen> {
 
       if (mounted) {
         if (response.user != null) {
-          // Success - initialize user session
-          await UserSessionManager().initializeUserSession(response.user!.id);
-          
-          // Navigate to home
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => const HomeScreen(),
-            ),
-          );
+          // Check if email confirmation is required
+          if (response.user!.emailConfirmedAt == null) {
+            // Email confirmation required - show dialog instead of navigating away
+            _showEmailConfirmationDialog(_emailController.text);
+          } else {
+            // Email already confirmed (shouldn't happen with email confirmation enabled)
+            await UserSessionManager().initializeUserSession(response.user!.id);
+            
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => const HomeScreen(isNewUser: true),
+              ),
+            );
+          }
         } else {
           // Show generic error if no user but no exception thrown
           _showErrorMessage('Failed to create account. Please try again.');
@@ -179,6 +190,78 @@ class _SignupScreenState extends State<SignupScreen> {
         margin: ResponsiveUtils.getScreenPadding(context),
       ),
     );
+  }
+
+  /// Show email confirmation dialog with resend option
+  void _showEmailConfirmationDialog(String email) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.email_outlined, color: Colors.blue, size: 28),
+              SizedBox(width: 12),
+              Expanded(child: Text('Check Your Email', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('We\'ve sent a confirmation link to:', style: TextStyle(fontSize: 16)),
+              SizedBox(height: 8),
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.shade200)),
+                child: Text(email, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.blue.shade800)),
+              ),
+              SizedBox(height: 16),
+              Text('Please check your email and click the confirmation link to complete your registration.', style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
+              SizedBox(height: 12),
+              Text('Didn\'t receive the email? Check your spam folder or resend it.', style: TextStyle(fontSize: 14, color: Colors.orange.shade700)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _resendConfirmation(email);
+              },
+              child: Text('Resend Email', style: TextStyle(color: Colors.blue.shade700)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pop(); // Go back to login
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+              child: Text('Go to Login'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Resend email confirmation
+  Future<void> _resendConfirmation(String email) async {
+    try {
+      await SupabaseService().client.auth.resend(type: OtpType.signup, email: email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Confirmation email resent to $email. Please check your inbox.'), backgroundColor: Colors.green, duration: Duration(seconds: 4)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMessage = AuthErrorHandler.getErrorMessage(e);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to resend confirmation: $errorMessage'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   /// Show login suggestion dialog

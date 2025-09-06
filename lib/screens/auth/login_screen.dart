@@ -54,10 +54,14 @@ class _LoginScreenState extends State<LoginScreen> {
           // Success - initialize user session
           await UserSessionManager().initializeUserSession(response.user!.id);
           
+          // Check if user signed up today (new user)
+          final user = response.user!;
+          final isNewUser = DateTime.now().difference(DateTime.parse(user.createdAt)).inDays == 0;
+          
           // Navigate to home
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (context) => const HomeScreen(),
+              builder: (context) => HomeScreen(isNewUser: isNewUser),
             ),
           );
         } else {
@@ -189,6 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     });
   }
+
 
   @override
   Widget build(BuildContext context) {

@@ -157,7 +157,7 @@ class UserSessionManager {
   Future<void> _clearUIState() async {
     try {
       // Clear automatic tracker state
-      AutomaticScreenTracker().resetCurrentSession();
+      AutomaticScreenTracker().refreshTodayData();
       
       print('✅ UI state cleared');
     } catch (e) {
