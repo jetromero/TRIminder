@@ -23,6 +23,9 @@ class _ServiceData {
   
   // Enhanced midnight detection
   DateTime? lastMidnightCheck; // Track last midnight check to avoid missing sessions
+
+  // Session timeout timer
+  Timer? sessionTimeoutTimer;
 }
 
 
@@ -470,7 +473,7 @@ class PersistentTrackerService {
     }
 
     // Periodic tasks (every 3 seconds) - for real-time updates
-    Timer.periodic(const Duration(minutes: 1), (timer) async {
+    Timer.periodic(const Duration(seconds: 5), (timer) async {
       try {
 
         // Reload today's total from DB
@@ -618,6 +621,10 @@ class PersistentTrackerService {
     // Listen for stop command
     service.on('stop').listen((event) async {
       print('🛑 Received stop command');
+
+      // Cancel any pending timeout
+      serviceData.sessionTimeoutTimer?.cancel();
+      serviceData.sessionTimeoutTimer = null;
       
       // Save any ongoing session
       final currentTime = DateTime.now();
@@ -753,89 +760,40 @@ class PersistentTrackerService {
     try {
       switch (event) {
         case ScreenStateEvent.SCREEN_ON:
-          // DON'T clear timeout - just start session if none exists
-          if (serviceData.screenOnTime == null) {
-            serviceData.screenOnTime = DateTime.now();
-            print('📱 Screen ON - started new session at ${serviceData.screenOnTime}');
-          } else {
-            print('📱 Screen ON - continuing existing session since ${serviceData.screenOnTime}');
-          }
+          // Cancel timeout timer if user returns
+          serviceData.sessionTimeoutTimer?.cancel();
+          serviceData.sessionTimeoutTimer = null;
+          print('🔄 Screen ON - timeout timer cancelled');
+          // DON'T start or continue sessions on SCREEN_ON
           break;
           
         case ScreenStateEvent.SCREEN_OFF:
+
+          
           if (serviceData.screenOnTime != null) {
-            final DateTime screenOffTime = DateTime.now();
-            final DateTime start = serviceData.screenOnTime!;
-            final int sessionSeconds = screenOffTime.difference(start).inSeconds;
+            serviceData.sessionTimeoutTimer = Timer(const Duration(minutes: 2), () async {
+              final DateTime screenOffTime = DateTime.now();
+              final DateTime start = serviceData.screenOnTime!;
+              final int sessionSeconds = screenOffTime.difference(start).inSeconds;
 
-            // Resolve user id (same as _saveSession)
-            String? userId;
-            try { userId = SupabaseService().currentUserId; } catch (_) {}
-            if (userId == null || userId.isEmpty) {
-              try {
-                final db = DatabaseService();
-                final persisted = await db.getSyncMetadata('current_user_id');
-                if (persisted != null && persisted.isNotEmpty) {
-                  userId = persisted;
-                }
-              } catch (_) {}
-            }
+              // Cancel any existing timeout timer
+              serviceData.sessionTimeoutTimer?.cancel();
+              serviceData.sessionTimeoutTimer = null;
 
-            if (userId == null || userId.isEmpty) {
-              print('⚠️ No authenticated user found, skipping staging/saving');
-              serviceData.screenOnTime = null;
-              break;
-            }
-
-            final DateTime today = DateTime.now();
-
-            // Ignore ultra-short blips (< 3 min)
-            if (sessionSeconds < _minRecordableSeconds) {
-              print('🪙 Session below recordable threshold (${sessionSeconds}s < ${_minRecordableSeconds}s) - ignored but not saved');
-            } else if (sessionSeconds < _saveThresholdSeconds) {
-              // Stage it
-              final staged = await _loadStaged(userId, today);
-              int accum = staged['accumSeconds'] as int;
-              String? stagedStartIso = staged['startIso'] as String?;
-              String? stagedLastEndIso = staged['lastEndIso'] as String?;
-
-              accum += sessionSeconds;
-              stagedStartIso ??= start.toIso8601String();
-              stagedLastEndIso = screenOffTime.toIso8601String();
-
-              print('🧺 Staging session: +${(sessionSeconds/60).round()}m, staged total ${(accum/60).round()}m');
-
-              // If staged total reaches 1 hour, save aggregated once
-              if (accum >= _saveThresholdSeconds) {
-                final DateTime aggStart = DateTime.parse(stagedStartIso);
-                final DateTime aggEnd = DateTime.parse(stagedLastEndIso);
-                final int savedMinutes = await _savePossiblySplitSession(aggStart, aggEnd);
-                print('💾 Saved aggregated staged session: ~${(accum/60).round()}m → saved ${savedMinutes}m');
-                await _clearStaged(userId, today);
-              } else {
-                await _saveStaged(userId, today, accumSeconds: accum, startIso: stagedStartIso, lastEndIso: stagedLastEndIso);
-              }
-            } else {
-              // Regular save for >= 1 hour
-              final int savedMinutes = await _savePossiblySplitSession(start, screenOffTime);
-              print('📱 Screen OFF - Session: ${sessionSeconds}s → saved ${savedMinutes}m');
-            }
-
-            // Reset the session store
-            serviceData.screenOnTime = null;
-            print('🔄 Session store reset after screen OFF handling');
-
-            // Reload today's total from DB to ensure consistency
-            await _loadTodayScreenTime(serviceData);
-
-            // Start timeout marker
-            serviceData.screenOffTime = screenOffTime;
-            print('⏰ Screen OFF timeout started - session will end in 3 minutes if no activity');
+              print('⏰ Session timeout reached - forcing session end');
+              await _forceEndSession(service, serviceData, screenOffTime, sessionSeconds, start, screenOffTime);
+            });
+            
           }
           break;
           
         case ScreenStateEvent.SCREEN_UNLOCKED:
           // THIS is the real user interaction - clear timeout here
+
+          // Cancel timeout timer if user returns
+          serviceData.sessionTimeoutTimer?.cancel();
+          serviceData.sessionTimeoutTimer = null;
+
           if (serviceData.screenOffTime != null) {
             final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
             print('📱 Screen UNLOCKED - user returned after ${timeSinceScreenOff}m, continuing session');
@@ -854,6 +812,84 @@ class PersistentTrackerService {
     } catch (e) {
       print('❌ Error handling screen event: $e');
     }
+  }
+
+  /// Force end session due to timeout
+  static Future<void> _forceEndSession(
+    ServiceInstance service,
+    _ServiceData serviceData,
+    DateTime endTime,
+    int sessionSeconds,
+    DateTime start,
+    DateTime screenOffTime,
+  ) async {
+    // Resolve user id (same as _saveSession)
+    String? userId;
+
+    try { userId = SupabaseService().currentUserId; } catch (_) {}
+    if (userId == null || userId.isEmpty) {
+      try {
+        final db = DatabaseService();
+        final persisted = await db.getSyncMetadata('current_user_id');
+        if (persisted != null && persisted.isNotEmpty) {
+          userId = persisted;
+        }
+      } catch (_) {}
+    }
+
+    if (userId == null || userId.isEmpty) {
+              print('⚠️ No authenticated user found, skipping staging/saving');
+              serviceData.screenOnTime = null;
+              return;
+    }
+
+    final DateTime today = DateTime.now();
+
+    // Ignore ultra-short blips (< 3 min)
+    if (sessionSeconds < _minRecordableSeconds) {
+      print('🪙 Session below recordable threshold (${sessionSeconds}s < ${_minRecordableSeconds}s) - ignored but not saved');
+    } else if (sessionSeconds < _saveThresholdSeconds) {
+      // Stage it
+      final staged = await _loadStaged(userId, today);
+      int accum = staged['accumSeconds'] as int;
+      String? stagedStartIso = staged['startIso'] as String?;
+      String? stagedLastEndIso = staged['lastEndIso'] as String?;
+
+      accum += sessionSeconds;
+      stagedStartIso ??= start.toIso8601String();
+      stagedLastEndIso = screenOffTime.toIso8601String();
+
+      print('🧺 Staging session: +${(sessionSeconds/60).round()}m, staged total ${(accum/60).round()}m');
+
+      // If staged total reaches 1 hour, save aggregated once
+      if (accum >= _saveThresholdSeconds) {
+        final DateTime aggStart = DateTime.parse(stagedStartIso);
+        final DateTime aggEnd = DateTime.parse(stagedLastEndIso);
+        final int savedMinutes = await _savePossiblySplitSession(aggStart, aggEnd);
+        print('💾 Saved aggregated staged session: ~${(accum/60).round()}m → saved ${savedMinutes}m');
+        await _clearStaged(userId, today);
+      } else {
+        await _saveStaged(userId, today, accumSeconds: accum, startIso: stagedStartIso, lastEndIso: stagedLastEndIso);
+      }
+    } else {
+      // Regular save for >= 1 hour
+      final int savedMinutes = await _savePossiblySplitSession(start, screenOffTime);
+      print('📱 Screen OFF - Session: ${sessionSeconds}s → saved ${savedMinutes}m');
+    }
+
+    // Reset the session store
+    serviceData.screenOnTime = null;
+    print('🔄 Session store reset after screen OFF handling');
+
+    // Reload today's total from DB to ensure consistency
+    await _loadTodayScreenTime(serviceData);
+
+    // Start 3-minute timeout timer
+    
+
+    // Start timeout marker
+    serviceData.screenOffTime = screenOffTime;
+    print('⏰ Screen OFF timeout started - session will end in 3 minutes if no activity');
   }
 
   

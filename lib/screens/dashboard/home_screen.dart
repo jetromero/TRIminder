@@ -152,7 +152,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   void _startRefreshTimer() {
     // Adjust interval based on connectivity
-    final interval = _isOffline ? Duration(seconds: 30) : Duration(minutes: 1);
+    final interval = Duration(seconds: 5);  // 5 seconds
     SimplifiedLogger.info('Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
     _refreshTimer = Timer.periodic(interval, (_) {
       SimplifiedLogger.verbose('${interval.inSeconds}-second refresh tick triggered');
