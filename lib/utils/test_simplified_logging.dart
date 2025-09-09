@@ -35,7 +35,7 @@ void exampleUsage() {
   SimplifiedLogger.session('Active session: 1m');
   
   // Instead of: print('❌ Error syncing session from background service: $e');
-  SimplifiedLogger.error('Error syncing session from background service: $e');
+  SimplifiedLogger.error('Error syncing session from background service: example error');
   
   // Instead of: print('✅ User XP updated online: +50 (Total: 150)');
   SimplifiedLogger.xp('User XP updated online: +50 (Total: 150)');

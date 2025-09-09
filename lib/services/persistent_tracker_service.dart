@@ -753,16 +753,9 @@ class PersistentTrackerService {
     try {
       switch (event) {
         case ScreenStateEvent.SCREEN_ON:
-          // Clear screen off timeout since user is back
-          if (serviceData.screenOffTime != null) {
-            final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
-            print('📱 Screen ON - user returned after ${timeSinceScreenOff}m, continuing session');
-            serviceData.screenOffTime = null;
-          }
-          
-          // Only start new session if not already tracking
+          // DON'T clear timeout - just start session if none exists
           if (serviceData.screenOnTime == null) {
-          serviceData.screenOnTime = DateTime.now();
+            serviceData.screenOnTime = DateTime.now();
             print('📱 Screen ON - started new session at ${serviceData.screenOnTime}');
           } else {
             print('📱 Screen ON - continuing existing session since ${serviceData.screenOnTime}');
@@ -842,7 +835,14 @@ class PersistentTrackerService {
           break;
           
         case ScreenStateEvent.SCREEN_UNLOCKED:
-          // Some devices only emit UNLOCK; start a session if none active
+          // THIS is the real user interaction - clear timeout here
+          if (serviceData.screenOffTime != null) {
+            final timeSinceScreenOff = DateTime.now().difference(serviceData.screenOffTime!).inMinutes;
+            print('📱 Screen UNLOCKED - user returned after ${timeSinceScreenOff}m, continuing session');
+            serviceData.screenOffTime = null;
+          }
+          
+          // Start session if none active
           if (serviceData.screenOnTime == null) {
             serviceData.screenOnTime = DateTime.now();
             print('📱 Screen unlocked → starting session at ${serviceData.screenOnTime}');
