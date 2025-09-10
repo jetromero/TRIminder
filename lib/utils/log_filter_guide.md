@@ -38,7 +38,7 @@ I/Choreographer(19861): Skipped 4 frames! The application may be doing too much 
 I/flutter (19861): ℹ️ Supabase not available in background isolate: Exception: Supabase not initialized. Call SupabaseService.initialize() first.
 I/flutter (19861): ℹ️ Using persisted user id for loading today's total: 96fe453b-0703-4528-9ec8-c50066cdd063
 I/flutter (19861): 📊 Today's total: 81m (1 sessions)
-I/flutter (19861): ❌ Error adding staged minutes to notification: Exception: Supabase not initialized. Call SupabaseService.initialize() first.
+I/flutter (19861): ❌ Error updating notification total: Exception: Supabase not initialized. Call SupabaseService.initialize() first.SupabaseService.initialize() first.
 I/flutter (19861): 💾 Updated session data in SharedPreferences: active=true, start=2025-09-07 04:41:47.663698, minutes=1
 I/flutter (19861): ⏰ 60-second refresh tick triggered
 I/flutter (19861): ⏰ Dashboard refresh - updating data (offline: false)

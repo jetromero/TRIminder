@@ -45,7 +45,7 @@ I/flutter (19861): 🔍 getCurrentSessionData: isRunning: true
 I/flutter (19861): 🔍 requestId: 1757190763751
 I/flutter (19861): 🔍 reqId: 1757190763751
 I/flutter (19861): 🔍 _currentSessionMinutes: 0
-I/flutter (19861): 🔍 Staged minutes: 3
+I/flutter (19861): 🔍 Current session minutes: 3
 I/flutter (19861): 🔍 Total: 84
 I/flutter (19861): 📊 AutomaticScreenTracker: Updating total to 84m, notifying listeners
 I/flutter (19861): 🔄 AutomaticTrackerDisplay: Listener triggered, updating UI at 2025-09-07 04:32:43.963731
@@ -64,7 +64,7 @@ I/flutter (19861): 📊 Sent reload command to background service
 I/flutter (19861): 🔄 Dashboard UI updated
 I/flutter (19861): ℹ️ Supabase not available in background isolate: Exception: Supabase not initialized. Call SupabaseService.initialize() first.
 I/flutter (19861): 🔍 _currentSessionMinutes: 1
-I/flutter (19861): 🔍 Staged minutes: 3
+I/flutter (19861): 🔍 Current session minutes: 3
 I/flutter (19861): 🔍 Total: 85
 I/flutter (19861): 📊 AutomaticScreenTracker: Updating total to 85m, notifying listeners
 I/flutter (19861): 🔄 AutomaticTrackerDisplay: Listener triggered, updating UI at 2025-09-07 04:32:44.078073

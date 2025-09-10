@@ -73,25 +73,14 @@ class AutomaticScreenTracker extends ChangeNotifier {
 
   // Note: Screen state monitoring methods removed - handled by PersistentTrackerService
 
-  Future<int> _getStagedMinutes() async {
-    try {
-      final userId = SupabaseService().currentUserId;
-      if (userId != null) {
-        return await PersistentTrackerService.getStagedMinutesForToday(userId);
-      }
-    } catch (e) {
-      SimplifiedLogger.error('Error getting staged minutes: $e');
-    }
-    return 0;
-  }
+  
 
   void _updateRealTimeTodayTotal() async {
-  // Calculate total from database + current session + staged
-  final stagedMinutes = await _getStagedMinutes();
-  _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes + stagedMinutes;
-  
-  SimplifiedLogger.verbose("Current session: ${_currentSessionMinutes}m, Staged: ${stagedMinutes}m, Total: ${_todayScreenTimeMinutes}m");
+    // Calculate total from database + current live session
+    _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
     
+    SimplifiedLogger.verbose("Current session: ${_currentSessionMinutes}m, Total: ${_todayScreenTimeMinutes}m");
+      
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
     _wellnessRating = _getWellnessRating(_todayScreenTimeMinutes);

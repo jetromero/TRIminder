@@ -34,56 +34,12 @@ class _ServiceData {
 /// Survives app closure, phone restarts, and system termination
 @pragma('vm:entry-point')
 class PersistentTrackerService {
-  static const int _minSessionSeconds = 3600; // 1 hour = 3600 seconds
   static const int _minRecordableSeconds = 180; // 3 minutes = 180 seconds
-  static const int _saveThresholdSeconds = 3600; // 1 hour = 3600 seconds
+  static const Duration _periodicTaskInterval = Duration(seconds: 5);
+  static const Duration _sessionTimeoutInterval = Duration(minutes: 1);
 
-  static String _stagedKeyPrefix(String userId, DateTime day) {
-    final d = DateTime(day.year, day.month, day.day);
-    final ymd = '${d.year.toString().padLeft(4, '0')}${d.month.toString().padLeft(2, '0')}${d.day.toString().padLeft(2, '0')}';
-    return 'staged_${userId}_$ymd';
-  }
-
-  static String _stagedAccumKey(String userId, DateTime day) => '${_stagedKeyPrefix(userId, day)}_accum_seconds';
-  static String _stagedStartKey(String userId, DateTime day) => '${_stagedKeyPrefix(userId, day)}_start_iso';
-  static String _stagedLastEndKey(String userId, DateTime day) => '${_stagedKeyPrefix(userId, day)}_last_end_iso';
-
-  static Future<Map<String, dynamic>> _loadStaged(String userId, DateTime day) async {
-    final db = DatabaseService();
-    final accumStr = await db.getSyncMetadata(_stagedAccumKey(userId, day)) ?? '0';
-    final startIso = await db.getSyncMetadata(_stagedStartKey(userId, day));
-    final lastEndIso = await db.getSyncMetadata(_stagedLastEndKey(userId, day));
-    return {
-      'accumSeconds': int.tryParse(accumStr) ?? 0,
-      'startIso': startIso,
-      'lastEndIso': lastEndIso,
-    };
-  }
-
-  static Future<int> getStagedMinutesForToday(String userId) async {
-    try {
-      final today = DateTime.now();
-      final staged = await _loadStaged(userId, today);
-      return (staged['accumSeconds'] as int) ~/ 60; // Convert seconds to minutes
-    } catch (e) {
-      SimplifiedLogger.error('Error getting staged minutes: $e');
-      return 0;
-    }
-  }
-
-  static Future<void> _saveStaged(String userId, DateTime day, {required int accumSeconds, String? startIso, String? lastEndIso}) async {
-    final db = DatabaseService();
-    await db.setSyncMetadata(_stagedAccumKey(userId, day), accumSeconds.toString());
-    await db.setSyncMetadata(_stagedStartKey(userId, day), startIso ?? '');
-    await db.setSyncMetadata(_stagedLastEndKey(userId, day), lastEndIso ?? '');
-  }
-
-  static Future<void> _clearStaged(String userId, DateTime day) async {
-    final db = DatabaseService();
-    await db.setSyncMetadata(_stagedAccumKey(userId, day), '0');
-    await db.setSyncMetadata(_stagedStartKey(userId, day), '');
-    await db.setSyncMetadata(_stagedLastEndKey(userId, day), '');
-  }
+  
+  
 
   static int _roundSecondsToMinutesNearest(int seconds) {
     final int minutes = (seconds / 60).round();
@@ -92,8 +48,8 @@ class PersistentTrackerService {
 
   static Future<int> _saveSessionRounded(DateTime start, DateTime end) async {
     final int seconds = end.difference(start).inSeconds;
-    if (seconds < _minSessionSeconds) {
-      SimplifiedLogger.verbose('Session below threshold (${seconds}s < ${_minSessionSeconds}s) - skipped');
+    if (seconds < _minRecordableSeconds) {
+      SimplifiedLogger.verbose('Session below threshold (${seconds}s < ${_minRecordableSeconds}s) - skipped');
       return 0;
     }
     final int minutes = _roundSecondsToMinutesNearest(seconds);
@@ -416,8 +372,14 @@ class PersistentTrackerService {
 
     // Start tracking immediately if screen is currently on
     // This ensures tracking starts right after login, not waiting for screen events
-    serviceData.screenOnTime = DateTime.now();
-    print('📱 Tracking started immediately at ${serviceData.screenOnTime}');
+    // Instead of always setting screenOnTime on app open:
+    if (serviceData.screenOnTime == null) {
+      // Only set if no session is already active
+      serviceData.screenOnTime = DateTime.now();
+    } else {
+      // Continue existing session
+      print('Continuing existing session since ${serviceData.screenOnTime}');
+    }
 
     // Immediately store session data for dashboard access
     try {
@@ -472,8 +434,8 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 3 seconds) - for real-time updates
-    Timer.periodic(const Duration(seconds: 5), (timer) async {
+    // Periodic tasks (every 5 seconds) - for real-time updates
+    Timer.periodic(_periodicTaskInterval, (timer) async {
       try {
 
         // Reload today's total from DB
@@ -487,18 +449,9 @@ class PersistentTrackerService {
           totalMinutes += sessionSeconds ~/ 60; // Add current session
         }
         
-        // Add staged minutes
-        try {
-          final userId = SupabaseService().currentUserId;
-          if (userId != null) {
-            final stagedMinutes = await getStagedMinutesForToday(userId);
-            totalMinutes += stagedMinutes;
-          }
-        } catch (e) {
-          print('❌ Error adding staged minutes to notification: $e');
-        }
+        
 
-        // Update notification with total including staged
+        // Update notification with total including current live session
         if (service is AndroidServiceInstance) {
           final int hours = totalMinutes ~/ 60;
           final int minutes = totalMinutes % 60;
@@ -515,16 +468,12 @@ class PersistentTrackerService {
             }
             
             if (userId != null && userId.isNotEmpty) {
-              final stagedMinutes = await getStagedMinutesForToday(userId);
-              final totalWithStaged = totalMinutes + stagedMinutes;
-              final stagedHours = totalWithStaged ~/ 60;
-              final stagedMins = totalWithStaged % 60;
-              final stagedTimeStr = stagedHours > 0 ? '${stagedHours}h ${stagedMins}m' : '${stagedMins}m';
-              
               service.setForegroundNotificationInfo(
-                title: 'TRIminder Tracking',
-                content: 'Today: $stagedTimeStr',
-              );
+              title: 'TRIminder Tracking',
+              content: 'Today: $timeStr',
+            );
+              
+              
             } else {
               service.setForegroundNotificationInfo(
                 title: 'TRIminder Tracking',
@@ -532,7 +481,7 @@ class PersistentTrackerService {
               );
             }
           } catch (e) {
-            print('❌ Error adding staged minutes to notification: $e');
+            print('❌ Error updating notification: $e');
             // Fallback to basic notification
             service.setForegroundNotificationInfo(
               title: 'TRIminder Tracking',
@@ -577,34 +526,6 @@ class PersistentTrackerService {
           serviceData.todayScreenTime = 0;
           
           await _loadTodayScreenTime(serviceData);
-
-          // NEW CODE TO ADD - Save any remaining staged sessions from yesterday
-          try {
-            final userId = SupabaseService().currentUserId;
-            if (userId != null) {
-              final yesterday = now.subtract(const Duration(days: 1));
-              final staged = await _loadStaged(userId, yesterday);
-              final accumSeconds = staged['accumSeconds'] as int;
-              
-              if (accumSeconds > 0) {
-                final stagedStartIso = staged['startIso'] as String?;
-                final stagedLastEndIso = staged['lastEndIso'] as String?;
-                
-                if (stagedStartIso != null && stagedLastEndIso != null) {
-                  final DateTime aggStart = DateTime.parse(stagedStartIso);
-                  final DateTime aggEnd = DateTime.parse(stagedLastEndIso);
-                  final int savedMinutes = await _savePossiblySplitSession(aggStart, aggEnd);
-                  print('📅 Saved yesterday staged session: ${(accumSeconds/60).round()}m → saved ${savedMinutes}m');
-                }
-                
-                // Clear the old staged data
-                await _clearStaged(userId, yesterday);
-                print('🧹 Cleared yesterday staged data');
-              }
-            }
-          } catch (e) {
-            print('❌ Error saving yesterday staged sessions: $e');
-          }
         }
 
         
@@ -759,32 +680,29 @@ class PersistentTrackerService {
   ) async {
     try {
       switch (event) {
-        case ScreenStateEvent.SCREEN_ON:
-          // Cancel timeout timer if user returns
-          serviceData.sessionTimeoutTimer?.cancel();
-          serviceData.sessionTimeoutTimer = null;
-          print('🔄 Screen ON - timeout timer cancelled');
-          // DON'T start or continue sessions on SCREEN_ON
-          break;
+        
           
         case ScreenStateEvent.SCREEN_OFF:
 
-          
           if (serviceData.screenOnTime != null) {
-            serviceData.sessionTimeoutTimer = Timer(const Duration(minutes: 2), () async {
-              final DateTime screenOffTime = DateTime.now();
-              final DateTime start = serviceData.screenOnTime!;
-              final int sessionSeconds = screenOffTime.difference(start).inSeconds;
+          // Store the actual screen off time for accurate session calculation
+          serviceData.screenOffTime = DateTime.now();
+          
+          print('⏰ Screen OFF timeout started - session will end in ${_sessionTimeoutInterval.inMinutes} minutes if no activity');
+          serviceData.sessionTimeoutTimer = Timer(_sessionTimeoutInterval, () async {
+            final DateTime timeoutTime = DateTime.now();
+            final DateTime start = serviceData.screenOnTime!;
+            final DateTime actualScreenOffTime = serviceData.screenOffTime!;
+            final int sessionSeconds = actualScreenOffTime.difference(start).inSeconds;
 
-              // Cancel any existing timeout timer
-              serviceData.sessionTimeoutTimer?.cancel();
-              serviceData.sessionTimeoutTimer = null;
+            // Cancel any existing timeout timer
+            serviceData.sessionTimeoutTimer?.cancel();
+            serviceData.sessionTimeoutTimer = null;
 
-              print('⏰ Session timeout reached - forcing session end');
-              await _forceEndSession(service, serviceData, screenOffTime, sessionSeconds, start, screenOffTime);
-            });
-            
-          }
+            print('⏰ Session timeout reached - forcing session end');
+            await _forceEndSession(service, serviceData, timeoutTime, sessionSeconds, start, actualScreenOffTime);
+          });
+}
           break;
           
         case ScreenStateEvent.SCREEN_UNLOCKED:
@@ -806,6 +724,20 @@ class PersistentTrackerService {
             print('📱 Screen unlocked → starting session at ${serviceData.screenOnTime}');
           } else {
             print('📱 Screen unlocked - already tracking since ${serviceData.screenOnTime}');
+          }
+          break;
+        case ScreenStateEvent.SCREEN_ON:
+          // Cancel timeout timer if user returns
+          serviceData.sessionTimeoutTimer?.cancel();
+          serviceData.sessionTimeoutTimer = null;
+          print('🔄 Screen ON - timeout timer cancelled');
+          
+          // Start session if none active (screen is on, user might be using it)
+          if (serviceData.screenOnTime == null) {
+            serviceData.screenOnTime = DateTime.now();
+            print('📱 Screen ON → starting session at ${serviceData.screenOnTime}');
+          } else {
+            print('📱 Screen ON - already tracking since ${serviceData.screenOnTime}');
           }
           break;
       }
@@ -838,44 +770,22 @@ class PersistentTrackerService {
     }
 
     if (userId == null || userId.isEmpty) {
-              print('⚠️ No authenticated user found, skipping staging/saving');
-              serviceData.screenOnTime = null;
-              return;
+      print('⚠️ No authenticated user found, skipping save');
+      serviceData.screenOnTime = null;
+      return;
     }
 
-    final DateTime today = DateTime.now();
 
     // Ignore ultra-short blips (< 3 min)
     if (sessionSeconds < _minRecordableSeconds) {
-      print('🪙 Session below recordable threshold (${sessionSeconds}s < ${_minRecordableSeconds}s) - ignored but not saved');
-    } else if (sessionSeconds < _saveThresholdSeconds) {
-      // Stage it
-      final staged = await _loadStaged(userId, today);
-      int accum = staged['accumSeconds'] as int;
-      String? stagedStartIso = staged['startIso'] as String?;
-      String? stagedLastEndIso = staged['lastEndIso'] as String?;
-
-      accum += sessionSeconds;
-      stagedStartIso ??= start.toIso8601String();
-      stagedLastEndIso = screenOffTime.toIso8601String();
-
-      print('🧺 Staging session: +${(sessionSeconds/60).round()}m, staged total ${(accum/60).round()}m');
-
-      // If staged total reaches 1 hour, save aggregated once
-      if (accum >= _saveThresholdSeconds) {
-        final DateTime aggStart = DateTime.parse(stagedStartIso);
-        final DateTime aggEnd = DateTime.parse(stagedLastEndIso);
-        final int savedMinutes = await _savePossiblySplitSession(aggStart, aggEnd);
-        print('💾 Saved aggregated staged session: ~${(accum/60).round()}m → saved ${savedMinutes}m');
-        await _clearStaged(userId, today);
-      } else {
-        await _saveStaged(userId, today, accumSeconds: accum, startIso: stagedStartIso, lastEndIso: stagedLastEndIso);
-      }
+      print('🪙 Session below recordable threshold (${sessionSeconds}s < ${_minRecordableSeconds}s) - ignored');
     } else {
-      // Regular save for >= 1 hour
+      // Save session immediately - no staging, no aggregation
       final int savedMinutes = await _savePossiblySplitSession(start, screenOffTime);
-      print('📱 Screen OFF - Session: ${sessionSeconds}s → saved ${savedMinutes}m');
+      print('💾 Saved individual session: ${(sessionSeconds/60).round()}m → saved ${savedMinutes}m');
     }
+    
+
 
     // Reset the session store
     serviceData.screenOnTime = null;
@@ -884,12 +794,10 @@ class PersistentTrackerService {
     // Reload today's total from DB to ensure consistency
     await _loadTodayScreenTime(serviceData);
 
-    // Start 3-minute timeout timer
     
 
-    // Start timeout marker
     serviceData.screenOffTime = screenOffTime;
-    print('⏰ Screen OFF timeout started - session will end in 3 minutes if no activity');
+    
   }
 
   
