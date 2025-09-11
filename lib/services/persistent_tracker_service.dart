@@ -26,6 +26,13 @@ class _ServiceData {
 
   // Session timeout timer
   Timer? sessionTimeoutTimer;
+  
+  // Smart idle detection
+  DateTime? lastTouchTime;
+  DateTime? lastAppSwitchTime;
+  DateTime? lastMotionTime;
+  String? currentApp;
+  bool isUserActive = false;
 }
 
 
@@ -529,7 +536,7 @@ class PersistentTrackerService {
         }
 
         
-
+        
         
 
       } catch (e) {
