@@ -12,6 +12,7 @@ import '../services/database_service.dart';
 import '../services/supabase_service.dart';
 import '../services/improved_sync_service.dart';
 import '../utils/simplified_logger.dart';
+import 'idle_detection_service.dart';
 
 
 /// Data wrapper class for service variables (enables reference passing)
@@ -43,7 +44,7 @@ class _ServiceData {
 class PersistentTrackerService {
   static const int _minRecordableSeconds = 180; // 3 minutes = 180 seconds
   static const Duration _periodicTaskInterval = Duration(seconds: 5);
-  static const Duration _sessionTimeoutInterval = Duration(minutes: 1);
+  static const Duration _sessionTimeoutInterval = Duration(seconds: 10);
 
   
   
@@ -356,9 +357,57 @@ class PersistentTrackerService {
     return allGranted;
   }
 
+  /// Check device motion status
+  static Future<bool> _isDeviceMoving() async {
+    try {
+      return await IdleDetectionService.isDeviceMoving();
+    } catch (e) {
+      print('Error checking device motion: $e');
+      return false;
+    }
+  }
+
+  /// Smart idle detection - determines if user is actively using device
+  static Future<bool> _isUserActive(_ServiceData serviceData) async {
+    final now = DateTime.now();
+    
+    // Check multiple factors with weighted scoring
+    bool hasRecentTouch = serviceData.lastTouchTime != null && 
+        now.difference(serviceData.lastTouchTime!).inSeconds < 30;
+        
+    bool hasRecentAppSwitch = serviceData.lastAppSwitchTime != null && 
+        now.difference(serviceData.lastAppSwitchTime!).inSeconds < 10;
+        
+    // Check device motion
+    bool isDeviceMoving = await _isDeviceMoving();
+    bool hasRecentMotion = serviceData.lastMotionTime != null && 
+        now.difference(serviceData.lastMotionTime!).inSeconds < 15;
+    
+    // Update motion time if device is moving
+    if (isDeviceMoving) {
+      serviceData.lastMotionTime = now;
+    }
+    
+    // Weighted scoring system
+    int activityScore = 0;
+    if (hasRecentTouch) activityScore += 40;      // 40% weight
+    if (hasRecentAppSwitch) activityScore += 30;   // 30% weight
+    if (hasRecentMotion || isDeviceMoving) activityScore += 30; // 30% weight
+    
+    // Consider user active if score >= 50%
+    return activityScore >= 50;
+  }
+
+  /// Update user activity status
+  static Future<void> _updateUserActivity(_ServiceData serviceData) async {
+    serviceData.isUserActive = await _isUserActive(serviceData);
+  }
+
   /// Background service entry point (runs in isolate)
   @pragma('vm:entry-point')
   @pragma('dart2js:tryInline')
+
+
   static void _onStart(ServiceInstance service) async {
     // Ensure Flutter binding and plugins are registered in the background isolate
     try {
@@ -445,16 +494,28 @@ class PersistentTrackerService {
     Timer.periodic(_periodicTaskInterval, (timer) async {
       try {
 
+        // Update user activity status
+        await _updateUserActivity(serviceData);
+
+        // Add this after the _updateUserActivity call
+        if (serviceData.screenOnTime != null) {
+          print('📱 Screen tracking: Active=${serviceData.isUserActive}, Session=${DateTime.now().difference(serviceData.screenOnTime!).inSeconds}s');
+        }
+
         // Reload today's total from DB
         await _loadTodayScreenTime(serviceData);
 
-        // Calculate total: database + current session
+        // Calculate total: database + current session (if screen is on)
         int totalMinutes = serviceData.todayScreenTime; // Database total
+        int currentSessionMinutes = 0;
         if (serviceData.screenOnTime != null) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
-          totalMinutes += sessionSeconds ~/ 60; // Add current session
+          currentSessionMinutes = sessionSeconds ~/ 60;
+          totalMinutes += currentSessionMinutes;
         }
+        
+        print('📊 Screen time calculation: DB=${serviceData.todayScreenTime}m + Session=${currentSessionMinutes}m = Total=${totalMinutes}m');
         
         
 
@@ -465,28 +526,10 @@ class PersistentTrackerService {
           final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
           
           try {
-            String? userId;
-            try {
-              userId = SupabaseService().currentUserId;
-            } catch (e) {
-              // Fallback to persisted user ID
-              final db = DatabaseService();
-              userId = await db.getSyncMetadata('current_user_id');
-            }
-            
-            if (userId != null && userId.isNotEmpty) {
-              service.setForegroundNotificationInfo(
+            service.setForegroundNotificationInfo(
               title: 'TRIminder Tracking',
               content: 'Today: $timeStr',
             );
-              
-              
-            } else {
-              service.setForegroundNotificationInfo(
-                title: 'TRIminder Tracking',
-                content: 'Today: $timeStr',
-              );
-            }
           } catch (e) {
             print('❌ Error updating notification: $e');
             // Fallback to basic notification
@@ -499,12 +542,14 @@ class PersistentTrackerService {
 
         // Store current session info for dashboard access via SharedPreferences
         int liveExtra = 0;
-        if (serviceData.screenOnTime != null) {
+        if (serviceData.screenOnTime != null && serviceData.isUserActive) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
           liveExtra = sessionSeconds ~/ 60; // floor to minutes
-          
           await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, liveExtra);
+        } else if (serviceData.screenOnTime != null && !serviceData.isUserActive) {
+          // Still report active session start but 0 live increment when idle
+          await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, 0);
         } else {
           await _updateSessionDataInSharedPreferences(false, null, 0);
         }
@@ -590,6 +635,7 @@ class PersistentTrackerService {
         'sessionStartTime': serviceData.screenOnTime?.millisecondsSinceEpoch,
         'currentMinutes': currentMinutes,
         'todayTotal': serviceData.todayScreenTime,
+        'isUserActive': serviceData.isUserActive,
         'timestamp': DateTime.now().toIso8601String(),
       });
     });
@@ -692,24 +738,24 @@ class PersistentTrackerService {
         case ScreenStateEvent.SCREEN_OFF:
 
           if (serviceData.screenOnTime != null) {
-          // Store the actual screen off time for accurate session calculation
-          serviceData.screenOffTime = DateTime.now();
-          
-          print('⏰ Screen OFF timeout started - session will end in ${_sessionTimeoutInterval.inMinutes} minutes if no activity');
-          serviceData.sessionTimeoutTimer = Timer(_sessionTimeoutInterval, () async {
-            final DateTime timeoutTime = DateTime.now();
-            final DateTime start = serviceData.screenOnTime!;
-            final DateTime actualScreenOffTime = serviceData.screenOffTime!;
-            final int sessionSeconds = actualScreenOffTime.difference(start).inSeconds;
+            // Store the actual screen off time for accurate session calculation
+            serviceData.screenOffTime = DateTime.now();
+            
+            print('⏰ Screen OFF timeout started - session will end in ${_sessionTimeoutInterval.inMinutes} minutes if no activity');
+            serviceData.sessionTimeoutTimer = Timer(_sessionTimeoutInterval, () async {
+              final DateTime timeoutTime = DateTime.now();
+              final DateTime start = serviceData.screenOnTime!;
+              final DateTime actualScreenOffTime = serviceData.screenOffTime!;
+              final int sessionSeconds = actualScreenOffTime.difference(start).inSeconds;
 
-            // Cancel any existing timeout timer
-            serviceData.sessionTimeoutTimer?.cancel();
-            serviceData.sessionTimeoutTimer = null;
+              // Cancel any existing timeout timer
+              serviceData.sessionTimeoutTimer?.cancel();
+              serviceData.sessionTimeoutTimer = null;
 
-            print('⏰ Session timeout reached - forcing session end');
-            await _forceEndSession(service, serviceData, timeoutTime, sessionSeconds, start, actualScreenOffTime);
-          });
-}
+              print('⏰ Session timeout reached - forcing session end');
+              await _forceEndSession(service, serviceData, timeoutTime, sessionSeconds, start, actualScreenOffTime);
+            });
+          }
           break;
           
         case ScreenStateEvent.SCREEN_UNLOCKED:
@@ -725,6 +771,10 @@ class PersistentTrackerService {
             serviceData.screenOffTime = null;
           }
           
+          // Mark user as active (unlock indicates interaction)
+          serviceData.lastTouchTime = DateTime.now();
+          serviceData.isUserActive = true;
+          
           // Start session if none active
           if (serviceData.screenOnTime == null) {
             serviceData.screenOnTime = DateTime.now();
@@ -735,6 +785,7 @@ class PersistentTrackerService {
           break;
         case ScreenStateEvent.SCREEN_ON:
           // Cancel timeout timer if user returns
+          serviceData.lastTouchTime = DateTime.now();
           serviceData.sessionTimeoutTimer?.cancel();
           serviceData.sessionTimeoutTimer = null;
           print('🔄 Screen ON - timeout timer cancelled');

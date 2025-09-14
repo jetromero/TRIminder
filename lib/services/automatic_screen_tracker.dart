@@ -17,6 +17,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   // Screen state monitoring (simplified - no timer manager)
   
   // Tracking state
+  bool _isUserActive = false;
   bool _isMonitoring = false;
   DateTime? _currentSessionStart;
   
@@ -40,6 +41,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   List<String> get todayBadges => _todayBadges;
   String get todayScreenTime => _formatDuration(_todayScreenTimeMinutes);
   String get currentSession => _formatDuration(_currentSessionMinutes);
+  bool get isUserActive => _isUserActive;
   
   /// Start automatic screen monitoring (data display only - actual tracking handled by PersistentTrackerService)
   Future<bool> startMonitoring() async {
@@ -79,7 +81,10 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Calculate total from database + current live session
     _todayScreenTimeMinutes = _todayScreenTimeFromDatabase + _currentSessionMinutes;
     
-    SimplifiedLogger.verbose("Current session: ${_currentSessionMinutes}m, Total: ${_todayScreenTimeMinutes}m");
+    // Update user activity status
+    _isUserActive = await _checkUserActivity();
+    
+    SimplifiedLogger.verbose("Current session: ${_currentSessionMinutes}m, Total: ${_todayScreenTimeMinutes}m, Active: $_isUserActive");
       
     // Also update the wellness stats based on new total
     _todayPotentialXP = _calculateDailyXP(_todayScreenTimeMinutes);
@@ -89,6 +94,18 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // Notify listeners since this updates the main display data
     SimplifiedLogger.screenTime('Total updated: ${_todayScreenTimeMinutes}m');
     notifyListeners();
+  }
+
+  /// Check user activity status
+  Future<bool> _checkUserActivity() async {
+    try {
+      // Get session data from background service
+      final sessionData = await PersistentTrackerService.getCurrentSessionData();
+      return sessionData['isUserActive'] ?? false;
+    } catch (e) {
+      print('Error checking user activity: $e');
+      return false;
+    }
   }
 
   /// Update daily statistics display only (no XP award)

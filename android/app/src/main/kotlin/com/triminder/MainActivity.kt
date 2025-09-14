@@ -1,10 +1,12 @@
 package com.triminder
-
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
+
 
 class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -27,4 +29,24 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        setupIdleDetection(flutterEngine)
+    }
+
+    private fun setupIdleDetection(flutterEngine: FlutterEngine) {
+    val idleDetectionChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "idle_detection")
+    
+    idleDetectionChannel.setMethodCallHandler { call, result ->
+        when (call.method) {
+            "isDeviceMoving" -> {
+                // For now, return true (device is always "moving")
+                // In a full implementation, you'd check the IdleDetectionService
+                result.success(false)
+            }
+            else -> result.notImplemented()
+        }
+    }
+}
 }

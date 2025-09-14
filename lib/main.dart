@@ -8,10 +8,19 @@ import 'config/app_config.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize secure configuration
-  await AppConfig.initialize();
+  // Start the app immediately to avoid blocking the UI
+  runApp(const TRIminderApp());
   
+  // Initialize services in background to improve startup performance
+  _initializeServicesInBackground();
+}
+
+/// Initialize services in background to prevent UI blocking
+void _initializeServicesInBackground() async {
   try {
+    // Initialize secure configuration
+    await AppConfig.initialize();
+    
     // Initialize Supabase with secure configuration
     await SupabaseService.initialize(
       url: AppConfig.supabaseUrl,
@@ -21,16 +30,13 @@ void main() async {
     // Perform first-time setup
     await FirstTimeSetupService.performFirstTimeSetup();
 
+    // Initialize persistent background tracking service
+    await PersistentTrackerService.initialize();
+    
+    print('✅ All services initialized successfully');
   } catch (e) {
-    print('Error initializing Supabase: $e');
+    print('❌ Error initializing services: $e');
   }
-  
-  // Initialize persistent background tracking service
-  await PersistentTrackerService.initialize();
-  
-  // Note: Sync service will be initialized after user login
-  
-  runApp(const TRIminderApp());
 }
 
 
