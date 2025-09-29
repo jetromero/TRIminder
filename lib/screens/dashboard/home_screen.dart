@@ -29,10 +29,23 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isNewUser = false;
 
   List<Widget> get _screens => [
-    DashboardTab(isNewUser: _isNewUser),
-    const RankingsTab(),
-    const ProfileTab(),
+    DashboardTab(
+      isNewUser: _isNewUser,
+      onSelectTab: _handleSelectTab,
+    ),
+    RankingsTab(
+      onSelectTab: _handleSelectTab,
+    ),
+    ProfileTab(
+      onSelectTab: _handleSelectTab,
+    ),
   ];
+
+  void _handleSelectTab(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
 
   @override
   void initState() {
@@ -72,7 +85,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class DashboardTab extends StatefulWidget {
   final bool isNewUser;
-  const DashboardTab({super.key, this.isNewUser = false});
+  final ValueChanged<int> onSelectTab;
+  const DashboardTab({super.key, this.isNewUser = false, required this.onSelectTab});
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
@@ -534,6 +548,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
       appBar: AppBar(
         title: Text(
           'Dashboard',
@@ -555,18 +570,25 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       ),
       body: isLoading 
         ? const Center(child: CircularProgressIndicator())
-        : Center(
+        : RefreshIndicator(
+            onRefresh: () async {
+              await _comprehensiveRefresh();
+              if (mounted) setState(() {});
+            },
+            child: Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: ResponsiveUtils.getMaxContentWidth(context),
               ),
               child: ListView.separated(
+                  physics: const AlwaysScrollableScrollPhysics(),
                 padding: ResponsiveUtils.getScreenPadding(context),
                 itemCount: _getDashboardWidgets().length,
                 separatorBuilder: (context, index) => SizedBox(
                   height: ResponsiveUtils.getSpacing(context),
                 ),
                 itemBuilder: (context, index) => _getDashboardWidgets()[index],
+                ),
               ),
             ),
           ),
@@ -1009,18 +1031,32 @@ class RecentBadgesCard extends StatelessWidget {
 }
 
 class RankingsTab extends StatelessWidget {
-  const RankingsTab({super.key});
+  final ValueChanged<int> onSelectTab;
+  const RankingsTab({super.key, required this.onSelectTab});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: _AppDrawer(onSelectTab: onSelectTab),
       appBar: AppBar(
         title: const Text('Rankings'),
       ),
-      body: const Center(
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await Future.delayed(const Duration(milliseconds: 300));
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: const [
+            SizedBox(height: 200),
+            Center(
         child: Text(
           'Rankings Coming Soon!',
           style: TextStyle(fontSize: 18),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1028,52 +1064,326 @@ class RankingsTab extends StatelessWidget {
 }
 
 class ProfileTab extends StatefulWidget {
-  const ProfileTab({super.key});
+  final ValueChanged<int> onSelectTab;
+  const ProfileTab({super.key, required this.onSelectTab});
 
   @override
   State<ProfileTab> createState() => _ProfileTabState();
 }
 
 class _ProfileTabState extends State<ProfileTab> {
+  UserProfile? _profile;
+  String? _deptName;
+  bool _loading = true;
+  final _tagController = TextEditingController();
+  String? _availabilityMsg;
+  bool _checking = false;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _tagController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        setState(() { _loading = false; });
+        return;
+      }
+
+      UserProfile? profile;
+      // Try Supabase first
+      try { profile = await SupabaseService().getUserProfile(userId); } catch (_) {}
+      // Fallback to local DB
+      profile ??= await DatabaseService().getUserProfile(userId);
+
+      String? deptName;
+      if (profile?.departmentId != null) {
+        // Try cache first
+        deptName = await DatabaseService().getDepartmentName(profile!.departmentId!);
+        // Try cloud and cache
+        deptName ??= await SupabaseService().getDepartmentNameById(profile.departmentId!);
+      }
+
+      setState(() {
+        _profile = profile;
+        _deptName = deptName;
+        _tagController.text = profile?.userTag ?? '';
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() { _loading = false; });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
       appBar: AppBar(
         title: const Text('Profile'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () {
-              // Show logout confirmation
-              showDialog(
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await _loadProfile();
+          if (mounted) setState(() {});
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.only(top: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_profile == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 40),
+                child: Center(child: Text('No profile found')),
+              )
+            else ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Profile', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 12),
+                      _kv('Full name', _profile!.fullName),
+                      _kv('Email', _profile!.email),
+                      _kv('Role', _profile!.role),
+                      _kv('Department', _deptName ?? (_profile!.departmentId?.toString() ?? '—')),
+                      _kv('User tag', _profile!.userTag ?? '—'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'User Tag',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '1–15 letters + up to 4 digits. Case-insensitive unique.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _tagController,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        hintText: 'Enter your tag (e.g., Alice7)',
+                        suffixIcon: _checking ? const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                        ) : (_availabilityMsg == null
+                          ? null
+                          : Icon(
+                              _availabilityMsg!.startsWith('Available') ? Icons.check_circle : Icons.error,
+                              color: _availabilityMsg!.startsWith('Available') ? Colors.green : Colors.red,
+                            )),
+                      ),
+                      onChanged: (value) async {
+                        setState(() {
+                          _availabilityMsg = null;
+                          _checking = true;
+                        });
+                        await Future.delayed(const Duration(milliseconds: 350));
+                        final svc = SupabaseService();
+                        if (!svc.isValidUserTag(value)) {
+                          setState(() {
+                            _availabilityMsg = 'Invalid format';
+                            _checking = false;
+                          });
+                          return;
+                        }
+                        final ok = await svc.isUserTagAvailable(value);
+                        setState(() {
+                          _availabilityMsg = ok ? 'Available' : 'Already taken';
+                          _checking = false;
+                        });
+                      },
+                    ),
+                    if (_availabilityMsg != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _availabilityMsg!,
+                        style: TextStyle(
+                          color: _availabilityMsg!.startsWith('Available') ? Colors.green : Colors.red,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : () async {
+                          final tag = _tagController.text.trim();
+                          final svc = SupabaseService();
+                          if (!svc.isValidUserTag(tag)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Invalid tag format')),
+                            );
+                            return;
+                          }
+                          setState(() { _saving = true; });
+                          final ok = await svc.updateCurrentUserTag(tag);
+                          setState(() { _saving = false; });
+                          if (!mounted) return;
+                          if (ok) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('User tag updated')),
+                            );
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Could not update user tag')),
+                            );
+                          }
+                        },
+                        icon: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save),
+                        label: const Text('Save Tag'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget _kv(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// App-wide navigation drawer used across tabs
+class _AppDrawer extends StatelessWidget {
+  final ValueChanged<int> onSelectTab;
+  const _AppDrawer({required this.onSelectTab});
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+              ),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Text(
+                  'TRIminder',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dashboard),
+              title: const Text('Dashboard'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelectTab(0);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.leaderboard),
+              title: const Text('Rankings'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelectTab(1);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.person),
+              title: const Text('Profile'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelectTab(2);
+              },
+            ),
+            const Spacer(),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Logout'),
+              onTap: () async {
+                final confirmed = await showDialog<bool>(
                 context: context,
+                  useRootNavigator: true,
                 builder: (context) => AlertDialog(
                   title: const Text('Logout'),
                   content: const Text('Are you sure you want to logout?'),
                   actions: [
                     TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () => Navigator.of(context).pop(false),
                       child: const Text('Cancel'),
                     ),
                     TextButton(
-                      onPressed: () async {
-                        Navigator.of(context).pop(); // Close dialog first
-                        
-                        // Show loading indicator
+                        onPressed: () => Navigator.of(context).pop(true),
+                        child: const Text('Logout'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  if (!context.mounted) return;
                         showDialog(
                           context: context,
+                    useRootNavigator: true,
                           barrierDismissible: false,
                           builder: (context) => const Center(
                             child: CircularProgressIndicator(),
                           ),
                         );
-                        
                         try {
-                          // Proper logout with session cleanup
                           await UserSessionManager().logoutCurrentUser();
-                          
-                          if (mounted) {
-                            Navigator.of(context).pop(); // Close loading dialog
+                    if (context.mounted) {
+                      Navigator.of(context, rootNavigator: true).pop(); // close loading
                             Navigator.of(context).pushAndRemoveUntil(
                               MaterialPageRoute(
                                 builder: (context) => const LoginScreen(),
@@ -1082,37 +1392,26 @@ class _ProfileTabState extends State<ProfileTab> {
                             );
                           }
                         } catch (e) {
-                          if (mounted) {
-                            Navigator.of(context).pop(); // Close loading dialog
+                    if (context.mounted) {
+                      Navigator.of(context, rootNavigator: true).pop(); // close loading
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text('Logout error: $e'),
                                 backgroundColor: Colors.red,
                               ),
                             );
-                            // Force navigation anyway
                             Navigator.of(context).pushAndRemoveUntil(
                               MaterialPageRoute(
                                 builder: (context) => const LoginScreen(),
                               ),
                               (route) => false,
                             );
-                          }
-                        }
-                      },
-                      child: const Text('Logout'),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: const Center(
-        child: Text(
-          'Profile Coming Soon!',
-          style: TextStyle(fontSize: 18),
+                    }
+                  }
+                }
+              },
+            ),
+          ],
         ),
       ),
     );

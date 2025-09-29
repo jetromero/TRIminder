@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/database_service.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
 import '../utils/input_validator.dart';
@@ -12,6 +13,10 @@ class SupabaseService {
   // Rate limiting
   DateTime? _lastLoginAttempt;
   int _loginAttempts = 0;
+
+  // User tag rules: up to 15 letters followed by up to 4 digits
+  static const int _userTagLettersMax = 15;
+  static const int _userTagDigitsMax = 4;
 
   SupabaseClient get _client {
     try {
@@ -161,6 +166,9 @@ class SupabaseService {
 
         final int? departmentId = await _getDepartmentId(sanitizedDepartment);
 
+        // Generate a unique user tag for the new user
+        final String userTag = await _generateUniqueUserTag(seedName: sanitizedName);
+
         final userProfile = UserProfile(
           id: response.user!.id,
           fullName: sanitizedName,
@@ -172,7 +180,7 @@ class SupabaseService {
           isSynced: true,
         );
 
-        await _createUserProfile(userProfile);
+        await _createUserProfileWithTag(userProfile, userTag);
         print('User profile created successfully');
       }
 
@@ -202,19 +210,49 @@ class SupabaseService {
     }
   }
 
+  /// Fetch department name by id from Supabase and cache locally
+  Future<String?> getDepartmentNameById(int departmentId) async {
+    try {
+      final res = await _client
+          .from('departments')
+          .select('name')
+          .eq('id', departmentId)
+          .single();
+      final name = res['name'] as String?;
+      if (name != null) {
+        await DatabaseService().upsertDepartment(departmentId, name);
+      }
+      return name;
+    } catch (e) {
+      // Fallback to local cache
+      try {
+        return await DatabaseService().getDepartmentName(departmentId);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
   // User profile operations
 
-  Future<UserProfile?> _createUserProfile(UserProfile profile) async {
+  // Note: superseded by _createUserProfileWithTag
+
+  /// Create user profile and include a server-side `user_tag` field
+  Future<UserProfile?> _createUserProfileWithTag(UserProfile profile, String userTag) async {
     try {
+      final payload = {
+        ...profile.toJson(),
+        'user_tag': userTag.trim(),
+      };
       final response = await _client
           .from('profiles')
-          .insert(profile.toJson())
+          .insert(payload)
           .select()
           .single();
 
       return UserProfile.fromJson(response);
     } catch (e) {
-      print('Error creating user profile: $e');
+      print('Error creating user profile with tag: $e');
       return null;
     }
   }
@@ -253,6 +291,103 @@ class SupabaseService {
       print('Error updating user profile: $e');
       return null;
     }
+  }
+
+  // ---------------------------
+  // User Tag helpers
+  // ---------------------------
+
+  /// Validate user tag format (<=15 letters then <=4 digits)
+  bool isValidUserTag(String tag) {
+    final trimmed = tag.trim();
+    return RegExp(r'^[A-Za-z]{1,15}\d{0,4}$').hasMatch(trimmed);
+  }
+
+  /// Check if a user tag is available (not used by any profile)
+  Future<bool> isUserTagAvailable(String tag) async {
+    try {
+      if (!isValidUserTag(tag)) return false;
+      final res = await _client
+          .from('profiles')
+          .select('id')
+          .ilike('user_tag', tag.trim())
+          .limit(1);
+      return (res as List).isEmpty;
+    } catch (e) {
+      print('Error checking user tag availability: $e');
+      return false;
+    }
+  }
+
+  /// Update current user's tag if available and valid
+  Future<bool> updateCurrentUserTag(String newTag) async {
+    try {
+      if (!isAuthenticated) return false;
+      if (!isValidUserTag(newTag)) return false;
+      final available = await isUserTagAvailable(newTag);
+      if (!available) return false;
+      final String uid = currentUserId!;
+      await _client
+          .from('profiles')
+          .update({'user_tag': newTag.trim()})
+          .eq('id', uid)
+          .select('id')
+          .single();
+      // Also update local database copy for offline consistency
+      try {
+        final db = DatabaseService();
+        final local = await db.getUserProfile(uid);
+        if (local != null) {
+          await db.updateUserProfile(local.copyWith(userTag: newTag.trim()));
+        }
+      } catch (_) {}
+      return true;
+    } catch (e) {
+      print('Error updating user tag: $e');
+      return false;
+    }
+  }
+
+  /// Generate a unique user tag using the name seed and random digits
+  Future<String> _generateUniqueUserTag({String? seedName}) async {
+    // Derive base letters from name (letters only, max 20)
+    String base = (seedName ?? 'User').replaceAll(RegExp(r'[^A-Za-z]'), '');
+    if (base.isEmpty) base = 'User';
+    if (base.length > _userTagLettersMax) {
+      base = base.substring(0, _userTagLettersMax);
+    }
+
+    // Try base without digits first
+    String candidate = base;
+    if (await isUserTagAvailable(candidate)) return candidate;
+
+    // Then try base + 1..9999
+    for (int i = 1; i <= 9999; i++) {
+      final suffix = i.toString().padLeft(1, '0');
+      if (suffix.length > _userTagDigitsMax) break;
+      candidate = '$base$suffix';
+      if (await isUserTagAvailable(candidate)) return candidate;
+    }
+
+    // Fallback to random letters+digits within limits
+    for (int i = 0; i < 100; i++) {
+      final digitsLen = (_userTagDigitsMax);
+      final randNum = DateTime.now().microsecondsSinceEpoch % (pow10(digitsLen));
+      candidate = '$base$randNum';
+      if (candidate.length > (_userTagLettersMax + _userTagDigitsMax)) {
+        candidate = candidate.substring(0, _userTagLettersMax + _userTagDigitsMax);
+      }
+      if (await isUserTagAvailable(candidate)) return candidate;
+    }
+
+    // Last resort
+    return '${base}1';
+  }
+
+  int pow10(int n) {
+    int v = 1;
+    for (int i = 0; i < n; i++) v *= 10;
+    return v;
   }
 
   // Screen time operations

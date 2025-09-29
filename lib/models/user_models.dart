@@ -10,6 +10,7 @@ class UserProfile {
   final int xp;
   final DateTime createdAt;
   final bool isSynced;
+  final String? userTag; // Supabase: user_tag
 
   UserProfile({
     required this.id,
@@ -20,6 +21,7 @@ class UserProfile {
     required this.xp,
     required this.createdAt,
     this.isSynced = false,
+    this.userTag,
   });
 
   UserProfile copyWith({
@@ -31,6 +33,7 @@ class UserProfile {
     int? xp,
     DateTime? createdAt,
     bool? isSynced,
+    String? userTag,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -41,6 +44,7 @@ class UserProfile {
       xp: xp ?? this.xp,
       createdAt: createdAt ?? this.createdAt,
       isSynced: isSynced ?? this.isSynced,
+      userTag: userTag ?? this.userTag,
     );
   }
 
@@ -54,6 +58,7 @@ class UserProfile {
       'xp': xp,
       'createdAt': createdAt.toIso8601String(),
       'isSynced': isSynced ? 1 : 0,
+      'userTag': userTag,
     };
   }
 
@@ -67,6 +72,7 @@ class UserProfile {
       xp: map['xp'],
       createdAt: DateTime.parse(map['createdAt']),
       isSynced: map['isSynced'] == 1,
+      userTag: map['userTag'],
     );
   }
 
@@ -79,6 +85,7 @@ class UserProfile {
       'department_id': departmentId,
       'xp': xp,
       'created_at': createdAt.toIso8601String(),
+      if (userTag != null) 'user_tag': userTag,
     };
   }
 
@@ -92,6 +99,7 @@ class UserProfile {
       xp: json['xp'],
       createdAt: DateTime.parse(json['created_at']),
       isSynced: true,
+      userTag: json['user_tag'],
     );
   }
 

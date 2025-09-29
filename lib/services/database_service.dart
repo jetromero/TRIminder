@@ -24,6 +24,9 @@ class DatabaseService {
       path,
       version: 1,
       onCreate: _createTables,
+      onOpen: (db) async {
+        await _applyMigrations(db);
+      },
     );
   }
 
@@ -38,7 +41,8 @@ class DatabaseService {
       departmentId INTEGER,
       xp INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL,
-      isSynced INTEGER NOT NULL DEFAULT 0
+      isSynced INTEGER NOT NULL DEFAULT 0,
+      userTag TEXT
     )
   ''');
 
@@ -67,6 +71,14 @@ class DatabaseService {
         type INTEGER NOT NULL,
         requiredValue INTEGER NOT NULL,
         createdAt TEXT NOT NULL
+      )
+    ''');
+
+    // Departments table (cache for offline display)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS departments (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
       )
     ''');
 
@@ -108,6 +120,44 @@ class DatabaseService {
     await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
     await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
     await db.execute('CREATE INDEX idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
+  }
+
+  /// Apply lightweight migrations on open
+  Future<void> _applyMigrations(Database db) async {
+    try {
+      final columns = await db.rawQuery('PRAGMA table_info(user_profiles)');
+      final hasUserTag = columns.any((c) => (c['name'] as String?) == 'userTag');
+      if (!hasUserTag) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN userTag TEXT');
+      }
+
+      // Ensure departments table exists
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS departments (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL
+        )
+      ''');
+    } catch (e) {
+      AppLogger.warning('Migration check failed', 'migrate', e);
+    }
+  }
+
+  // Departments cache CRUD
+  Future<void> upsertDepartment(int id, String name) async {
+    final db = await database;
+    await db.insert(
+      'departments',
+      {'id': id, 'name': name},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> getDepartmentName(int id) async {
+    final db = await database;
+    final res = await db.query('departments', where: 'id = ?', whereArgs: [id], limit: 1);
+    if (res.isNotEmpty) return res.first['name'] as String?;
+    return null;
   }
 
   // CRUD Operations for User Profiles
