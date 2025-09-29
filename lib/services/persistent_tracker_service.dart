@@ -43,7 +43,7 @@ class _ServiceData {
 @pragma('vm:entry-point')
 class PersistentTrackerService {
   static const int _minRecordableSeconds = 180; // 3 minutes = 180 seconds
-  static const Duration _periodicTaskInterval = Duration(seconds: 5);
+  static const Duration _periodicTaskInterval = Duration(seconds: 15);
   static const Duration _sessionTimeoutInterval = Duration(seconds: 10);
 
   
@@ -416,19 +416,13 @@ class PersistentTrackerService {
       ui.DartPluginRegistrant.ensureInitialized();
     } catch (_) {}
 
-    print('🎯 Background service started in isolate');
+    
 
     // Initialize service data with wrapper class for reference passing
     final serviceData = _ServiceData();
     
     serviceData.lastSaveDate = DateTime.now();
 
-    // Load today's total screen time from database
-    await _loadTodayScreenTime(serviceData);
-
-    // Start tracking immediately if screen is currently on
-    // This ensures tracking starts right after login, not waiting for screen events
-    // Instead of always setting screenOnTime on app open:
     if (serviceData.screenOnTime == null) {
       // Only set if no session is already active
       serviceData.screenOnTime = DateTime.now();
@@ -437,13 +431,18 @@ class PersistentTrackerService {
       print('Continuing existing session since ${serviceData.screenOnTime}');
     }
 
+    // Load today's total screen time from database
+    await _loadTodayScreenTime(serviceData);
+
+    print('Background service ready - waiting for screen events to start tracking');
+
     // Immediately store session data for dashboard access
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('has_active_session', true);
-      await prefs.setInt('session_start_time', serviceData.screenOnTime!.millisecondsSinceEpoch);
+      await prefs.setBool('has_active_session', false);
+      await prefs.remove('session_start_time');
       await prefs.setInt('current_session_minutes', 0);
-      print('💾 Initial session data stored for dashboard');
+      print('💾 Initial session data stored: no active session');
     } catch (e) {
       print('❌ Error storing initial session data: $e');
     }
@@ -508,7 +507,10 @@ class PersistentTrackerService {
         // Calculate total: database + current session (if screen is on)
         int totalMinutes = serviceData.todayScreenTime; // Database total
         int currentSessionMinutes = 0;
-        if (serviceData.screenOnTime != null) {
+
+        final bool isLocked = await IdleDetectionService.isDeviceLocked();
+
+        if (serviceData.screenOnTime != null && !isLocked) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
           currentSessionMinutes = sessionSeconds ~/ 60;
@@ -542,13 +544,12 @@ class PersistentTrackerService {
 
         // Store current session info for dashboard access via SharedPreferences
         int liveExtra = 0;
-        if (serviceData.screenOnTime != null && serviceData.isUserActive) {
+        if (serviceData.screenOnTime != null && !isLocked && serviceData.isUserActive) {
           final DateTime now = DateTime.now();
           final int sessionSeconds = now.difference(serviceData.screenOnTime!).inSeconds;
-          liveExtra = sessionSeconds ~/ 60; // floor to minutes
+          liveExtra = sessionSeconds ~/ 60;
           await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, liveExtra);
-        } else if (serviceData.screenOnTime != null && !serviceData.isUserActive) {
-          // Still report active session start but 0 live increment when idle
+        } else if (serviceData.screenOnTime != null) {
           await _updateSessionDataInSharedPreferences(true, serviceData.screenOnTime!, 0);
         } else {
           await _updateSessionDataInSharedPreferences(false, null, 0);
@@ -785,18 +786,8 @@ class PersistentTrackerService {
           break;
         case ScreenStateEvent.SCREEN_ON:
           // Cancel timeout timer if user returns
-          serviceData.lastTouchTime = DateTime.now();
-          serviceData.sessionTimeoutTimer?.cancel();
-          serviceData.sessionTimeoutTimer = null;
-          print('🔄 Screen ON - timeout timer cancelled');
-          
-          // Start session if none active (screen is on, user might be using it)
-          if (serviceData.screenOnTime == null) {
-            serviceData.screenOnTime = DateTime.now();
-            print('📱 Screen ON → starting session at ${serviceData.screenOnTime}');
-          } else {
-            print('📱 Screen ON - already tracking since ${serviceData.screenOnTime}');
-          }
+      
+          print('🔄 Screen ON ');
           break;
       }
     } catch (e) {

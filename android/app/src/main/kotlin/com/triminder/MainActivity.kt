@@ -1,4 +1,6 @@
 package com.triminder
+import android.app.KeyguardManager
+import android.content.Context
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import android.app.NotificationChannel
@@ -22,7 +24,7 @@ class MainActivity : FlutterActivity() {
                 val channel = NotificationChannel(
                     channelId,
                     channelName,
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_DEFAULT
                 )
                 channel.description = "Foreground service for automatic screen time tracking"
                 notificationManager.createNotificationChannel(channel)
@@ -32,21 +34,6 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        setupIdleDetection(flutterEngine)
+        flutterEngine.plugins.add(IdleDetectionPlugin())
     }
-
-    private fun setupIdleDetection(flutterEngine: FlutterEngine) {
-    val idleDetectionChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "idle_detection")
-    
-    idleDetectionChannel.setMethodCallHandler { call, result ->
-        when (call.method) {
-            "isDeviceMoving" -> {
-                // For now, return true (device is always "moving")
-                // In a full implementation, you'd check the IdleDetectionService
-                result.success(false)
-            }
-            else -> result.notImplemented()
-        }
-    }
-}
 }

@@ -12,4 +12,13 @@ class IdleDetectionService {
       return false;
     }
   }
+
+  static Future<bool> isDeviceLocked() async {
+    try {
+      final bool locked = await _channel.invokeMethod('isDeviceLocked');
+      return locked;
+    } catch (_) {
+      return false;
+    }
+}
 }
