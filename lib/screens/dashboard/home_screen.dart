@@ -27,6 +27,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   bool _isNewUser = false;
+  bool _showFriends = false;
 
   List<Widget> get _screens => [
     DashboardTab(
@@ -43,7 +44,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _handleSelectTab(int index) {
     setState(() {
-      _currentIndex = index;
+      if (index == 100) {
+        _showFriends = true;
+      } else {
+        _currentIndex = index;
+        _showFriends = false;
+      }
     });
   }
 
@@ -56,12 +62,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _screens[_currentIndex],
+      body: _showFriends
+          ? FriendsTab(onSelectTab: _handleSelectTab)
+          : _screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
           setState(() {
             _currentIndex = index;
+            _showFriends = false;
           });
         },
         items: const [
@@ -1063,6 +1072,393 @@ class RankingsTab extends StatelessWidget {
   }
 }
 
+class FriendsTab extends StatelessWidget {
+  final ValueChanged<int> onSelectTab;
+  const FriendsTab({super.key, required this.onSelectTab});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      drawer: _AppDrawer(onSelectTab: onSelectTab),
+      appBar: AppBar(
+        title: const Text('Friends'),
+      ),
+      body: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          _FriendsSearchCard(),
+          const SizedBox(height: 16),
+          _FriendsListCard(),
+          const SizedBox(height: 16),
+          _FriendRequestsCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _FriendsSearchCard extends StatefulWidget {
+  @override
+  State<_FriendsSearchCard> createState() => _FriendsSearchCardState();
+}
+
+class _FriendsSearchCardState extends State<_FriendsSearchCard> {
+  final _controller = TextEditingController();
+  bool _loading = false;
+  UserProfile? _result;
+  bool _sending = false;
+  Timer? _debounce;
+  String? _statusHint; // self | already_friends | pending_in | pending_out | blocked | none
+
+  Future<void> _search() async {
+    final query = _controller.text.trim();
+    if (query.isEmpty) return;
+    setState(() { _loading = true; _result = null; });
+    try {
+      final profile = await SupabaseService().getProfileByUserTag(query);
+      String? statusHint;
+      if (profile != null) {
+        final me = SupabaseService().currentUserId;
+        if (me != null && profile.id == me) {
+          statusHint = 'self';
+        } else {
+          // Check relationship status by querying the pair if exists
+          try {
+            final a = SupabaseService().currentUserId;
+            if (a != null) {
+              final least = a.compareTo(profile.id) <= 0 ? a : profile.id;
+              final greatest = a.compareTo(profile.id) > 0 ? a : profile.id;
+              final row = await SupabaseService().client
+                  .from('friendships')
+                  .select('requester_id,status')
+                  .eq('user_a_id', least)
+                  .eq('user_b_id', greatest)
+                  .maybeSingle();
+              if (row != null) {
+                final s = (row['status'] as String?) ?? 'pending';
+                if (s == 'accepted') statusHint = 'already_friends';
+                else if (s == 'blocked') statusHint = 'blocked';
+                else if (s == 'pending') {
+                  final requester = row['requester_id'] as String?;
+                  statusHint = requester == a ? 'pending_out' : 'pending_in';
+                } else { statusHint = 'none'; }
+              } else {
+                statusHint = 'none';
+              }
+            }
+          } catch (_) { statusHint = 'none'; }
+        }
+      }
+      setState(() { _result = profile; _statusHint = statusHint; });
+    } finally {
+      if (mounted) setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _sendRequest(UserProfile target) async {
+    setState(() { _sending = true; });
+    try {
+      final ok = await SupabaseService().sendFriendRequest(target.id);
+      final msg = ok ? 'Friend request sent' : 'Could not send request';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
+    } finally {
+      if (mounted) setState(() { _sending = false; });
+    }
+  }
+
+  void _onChanged(String _) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      if (_controller.text.trim().isNotEmpty) {
+        _search();
+      } else {
+        setState(() { _result = null; _statusHint = null; });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Find friends by tag', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'Enter user tag (e.g., Alice7)',
+                      prefixIcon: Icon(Icons.tag),
+                    ),
+                    onChanged: _onChanged,
+                    onSubmitted: (_) => _search(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _loading ? null : _search,
+                  icon: _loading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.search),
+                  label: const Text('Search'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_result != null)
+              ListTile(
+                leading: const CircleAvatar(child: Icon(Icons.person)),
+                title: Text(_result!.fullName),
+                subtitle: Text('@${_result!.userTag ?? 'no-tag'}'),
+                trailing: FilledButton(
+                  onPressed: (_sending || _statusHint == 'self' || _statusHint == 'already_friends' || _statusHint == 'pending_out' || _statusHint == 'blocked')
+                      ? null
+                      : () => _sendRequest(_result!),
+                  child: _sending
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Text(
+                          _statusHint == 'self' ? 'It\'s you'
+                          : _statusHint == 'already_friends' ? 'Friends'
+                          : _statusHint == 'pending_in' ? 'Respond in Requests'
+                          : _statusHint == 'pending_out' ? 'Pending'
+                          : _statusHint == 'blocked' ? 'Blocked'
+                          : 'Add',
+                        ),
+                ),
+              )
+            else if (!_loading && _controller.text.trim().isNotEmpty)
+              const Text('No user found'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FriendsListCard extends StatefulWidget {
+  @override
+  State<_FriendsListCard> createState() => _FriendsListCardState();
+}
+
+class _FriendsListCardState extends State<_FriendsListCard> {
+  bool _loading = true;
+  List<UserProfile> _friends = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; });
+    try {
+      final data = await SupabaseService().getFriends();
+      setState(() { _friends = data; });
+    } finally {
+      if (mounted) setState(() { _loading = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('Your friends', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                IconButton(
+                  onPressed: _loading ? null : _load,
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_loading)
+              const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 8), child: CircularProgressIndicator()))
+            else if (_friends.isEmpty)
+              const Text('No friends yet')
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _friends.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final p = _friends[i];
+                  return ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    title: Text(p.fullName),
+                    subtitle: Text('@${p.userTag ?? 'no-tag'}'),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FriendRequestsCard extends StatefulWidget {
+  @override
+  State<_FriendRequestsCard> createState() => _FriendRequestsCardState();
+}
+
+class _FriendRequestsCardState extends State<_FriendRequestsCard> {
+  bool _loading = true;
+  bool _busy = false;
+  List<Map<String, dynamic>> _incoming = const [];
+  List<Map<String, dynamic>> _outgoing = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; });
+    try {
+      final incoming = await SupabaseService().getIncomingPendingRequests();
+      final outgoing = await SupabaseService().getOutgoingPendingRequests();
+      setState(() {
+        _incoming = incoming;
+        _outgoing = outgoing;
+      });
+    } finally {
+      if (mounted) setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _accept(int id) async {
+    setState(() { _busy = true; });
+    try {
+      await SupabaseService().acceptFriendRequest(id);
+      await _load();
+    } finally {
+      if (mounted) setState(() { _busy = false; });
+    }
+  }
+
+  Future<void> _reject(int id) async {
+    setState(() { _busy = true; });
+    try {
+      await SupabaseService().rejectFriendRequest(id);
+      await _load();
+    } finally {
+      if (mounted) setState(() { _busy = false; });
+    }
+  }
+
+  Future<void> _cancel(int id) async {
+    setState(() { _busy = true; });
+    try {
+      await SupabaseService().cancelMyPendingRequest(id);
+      await _load();
+    } finally {
+      if (mounted) setState(() { _busy = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('Friend requests', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_loading)
+              const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 8), child: CircularProgressIndicator()))
+            else ...[
+              Text('Incoming', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (_incoming.isEmpty) const Text('No incoming pending requests')
+              else ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _incoming.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final r = _incoming[i];
+                  final UserProfile? cp = r['counterpart'] as UserProfile?;
+                  return ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    title: Text(cp?.fullName ?? 'User'),
+                    subtitle: Text('@${cp?.userTag ?? 'no-tag'}'),
+                    trailing: Wrap(spacing: 8, children: [
+                      FilledButton(
+                        onPressed: _busy ? null : () => _accept(r['id'] as int),
+                        child: const Text('Accept'),
+                      ),
+                      OutlinedButton(
+                        onPressed: _busy ? null : () => _reject(r['id'] as int),
+                        child: const Text('Reject'),
+                      ),
+                    ]),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Text('Outgoing', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (_outgoing.isEmpty) const Text('No outgoing pending requests')
+              else ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _outgoing.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final r = _outgoing[i];
+                  final UserProfile? cp = r['counterpart'] as UserProfile?;
+                  return ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    title: Text(cp?.fullName ?? 'User'),
+                    subtitle: Text('@${cp?.userTag ?? 'no-tag'}'),
+                    trailing: OutlinedButton(
+                      onPressed: _busy ? null : () => _cancel(r['id'] as int),
+                      child: const Text('Cancel'),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class ProfileTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
   const ProfileTab({super.key, required this.onSelectTab});
@@ -1336,6 +1732,14 @@ class _AppDrawer extends StatelessWidget {
               onTap: () {
                 Navigator.of(context).pop();
                 onSelectTab(1);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.group),
+              title: const Text('Friends'),
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelectTab(100);
               },
             ),
             ListTile(

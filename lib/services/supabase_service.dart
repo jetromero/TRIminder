@@ -412,6 +412,238 @@ class SupabaseService {
     }
   }
 
+  // ---------------------------
+  // Friends / Profiles Lookup
+  // ---------------------------
+
+  /// Lookup a profile by user_tag (case-insensitive). Returns null if not found.
+  Future<UserProfile?> getProfileByUserTag(String tag) async {
+    try {
+      if (tag.trim().isEmpty) return null;
+      final res = await _client
+          .from('profiles')
+          .select()
+          .ilike('user_tag', tag.trim())
+          .limit(1)
+          .maybeSingle();
+      if (res == null) return null;
+      return UserProfile.fromJson(res);
+    } catch (e) {
+      print('Error looking up profile by tag: $e');
+      return null;
+    }
+  }
+
+  // -------------------------------------------------
+  // Friendships (pending/accept/cancel) with normalized pair
+  // Schema expected: friendships(user_a_id, user_b_id, requester_id, status)
+  // -------------------------------------------------
+
+  String _leastId(String a, String b) => a.compareTo(b) <= 0 ? a : b;
+  String _greatestId(String a, String b) => a.compareTo(b) > 0 ? a : b;
+
+  /// Send a friend request to [targetUserId]. Returns true if created or already pending.
+  Future<bool> sendFriendRequest(String targetUserId) async {
+    try {
+      final me = currentUserId;
+      if (me == null) throw Exception('Not authenticated');
+      if (me == targetUserId) throw Exception('Cannot friend yourself');
+
+      final a = _leastId(me, targetUserId);
+      final b = _greatestId(me, targetUserId);
+
+      // Try insert; if unique pair exists, handle gracefully
+      try {
+        await _client.from('friendships').insert({
+          'user_a_id': a,
+          'user_b_id': b,
+          'requester_id': me,
+          'status': 'pending',
+        });
+        return true;
+      } catch (e) {
+        // Check existing row and act based on status
+        final existing = await _client
+            .from('friendships')
+            .select('id, requester_id, status')
+            .eq('user_a_id', a)
+            .eq('user_b_id', b)
+            .maybeSingle();
+        if (existing == null) rethrow;
+        final status = existing['status'] as String?;
+        if (status == 'accepted' || status == 'pending') return true;
+        // If rejected/blocked, allow re-send by updating back to pending by requester
+        if (existing['requester_id'] == me) {
+          await _client
+              .from('friendships')
+              .update({'status': 'pending'})
+              .eq('user_a_id', a)
+              .eq('user_b_id', b);
+          return true;
+        }
+        return false;
+      }
+    } catch (e) {
+      print('Error sending friend request: $e');
+      return false;
+    }
+  }
+
+  /// Get incoming pending requests (someone sent me a request)
+  Future<List<Map<String, dynamic>>> getIncomingPendingRequests() async {
+    try {
+      final me = currentUserId;
+      if (me == null) return [];
+      final rows = await _client
+          .from('friendships')
+          .select('id, user_a_id, user_b_id, requester_id, status, created_at')
+          .eq('status', 'pending')
+          .neq('requester_id', me)
+          .or('user_a_id.eq.$me,user_b_id.eq.$me')
+          .order('created_at', ascending: false);
+
+      // Attach counterpart profile for convenience
+      final counterpartIds = <String>{};
+      for (final r in rows) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        final other = ua == me ? ub : ua;
+        counterpartIds.add(other);
+      }
+      final profiles = await _fetchProfilesByIds(counterpartIds.toList());
+      final byId = {for (final p in profiles) p.id: p};
+      return rows.map<Map<String, dynamic>>((r) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        final other = ua == me ? ub : ua;
+        return {
+          ...r,
+          'counterpart': byId[other],
+        };
+      }).toList();
+    } catch (e) {
+      print('Error fetching incoming requests: $e');
+      return [];
+    }
+  }
+
+  /// Get outgoing pending requests (I sent and waiting)
+  Future<List<Map<String, dynamic>>> getOutgoingPendingRequests() async {
+    try {
+      final me = currentUserId;
+      if (me == null) return [];
+      final rows = await _client
+          .from('friendships')
+          .select('id, user_a_id, user_b_id, requester_id, status, created_at')
+          .eq('status', 'pending')
+          .eq('requester_id', me)
+          .order('created_at', ascending: false);
+      final counterpartIds = <String>{};
+      for (final r in rows) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        final other = ua == me ? ub : ua;
+        counterpartIds.add(other);
+      }
+      final profiles = await _fetchProfilesByIds(counterpartIds.toList());
+      final byId = {for (final p in profiles) p.id: p};
+      return rows.map<Map<String, dynamic>>((r) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        final other = ua == me ? ub : ua;
+        return {
+          ...r,
+          'counterpart': byId[other],
+        };
+      }).toList();
+    } catch (e) {
+      print('Error fetching outgoing requests: $e');
+      return [];
+    }
+  }
+
+  /// Accept a pending request (recipient action)
+  Future<bool> acceptFriendRequest(int id) async {
+    try {
+      await _client
+          .from('friendships')
+          .update({'status': 'accepted'})
+          .eq('id', id)
+          .eq('status', 'pending');
+      return true;
+    } catch (e) {
+      print('Error accepting friend request: $e');
+      return false;
+    }
+  }
+
+  /// Reject a pending request (recipient action)
+  Future<bool> rejectFriendRequest(int id) async {
+    try {
+      await _client
+          .from('friendships')
+          .update({'status': 'rejected'})
+          .eq('id', id)
+          .eq('status', 'pending');
+      return true;
+    } catch (e) {
+      print('Error rejecting friend request: $e');
+      return false;
+    }
+  }
+
+  /// Cancel my pending request (requester action)
+  Future<bool> cancelMyPendingRequest(int id) async {
+    try {
+      await _client
+          .from('friendships')
+          .delete()
+          .eq('id', id)
+          .eq('status', 'pending');
+      return true;
+    } catch (e) {
+      print('Error cancelling friend request: $e');
+      return false;
+    }
+  }
+
+  /// List of accepted friends as UserProfile
+  Future<List<UserProfile>> getFriends() async {
+    try {
+      final me = currentUserId;
+      if (me == null) return [];
+      final rows = await _client
+          .from('friendships')
+          .select('user_a_id, user_b_id, status')
+          .eq('status', 'accepted')
+          .or('user_a_id.eq.$me,user_b_id.eq.$me');
+      final ids = <String>{};
+      for (final r in rows) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        ids.add(ua == me ? ub : ua);
+      }
+      return _fetchProfilesByIds(ids.toList());
+    } catch (e) {
+      print('Error fetching friends: $e');
+      return [];
+    }
+  }
+
+  Future<List<UserProfile>> _fetchProfilesByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    try {
+      final res = await _client
+          .from('profiles')
+          .select()
+          .inFilter('id', ids);
+      return (res as List).map((e) => UserProfile.fromJson(e)).toList();
+    } catch (e) {
+      print('Error fetching profiles by ids: $e');
+      return [];
+    }
+  }
+
   /// Get screen time logs since a specific timestamp (for incremental sync)
   Future<List<ScreenTimeLog>> getScreenTimeLogsSince(String userId, DateTime since) async {
     if (!isAuthenticated) return [];

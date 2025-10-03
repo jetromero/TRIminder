@@ -21,6 +21,7 @@ class _ServiceData {
   DateTime? screenOffTime; // Track when screen went off for timeout logic
   int todayScreenTime = 0;
   DateTime lastSaveDate = DateTime.now();
+  DateTime? lastNotificationUpdate; // Throttle foreground notification updates
   
   // Enhanced midnight detection
   DateTime? lastMidnightCheck; // Track last midnight check to avoid missing sessions
@@ -44,6 +45,7 @@ class _ServiceData {
 class PersistentTrackerService {
   static const int _minRecordableSeconds = 180; // 3 minutes = 180 seconds
   static const Duration _periodicTaskInterval = Duration(seconds: 15);
+  static const Duration _foregroundNotificationInterval = Duration(minutes: 5);
   static const Duration _sessionTimeoutInterval = Duration(seconds: 10);
 
   
@@ -489,7 +491,7 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 5 seconds) - for real-time updates
+    // Periodic tasks (every 15 seconds) - for real-time updates
     Timer.periodic(_periodicTaskInterval, (timer) async {
       try {
 
@@ -522,23 +524,28 @@ class PersistentTrackerService {
         
 
         // Update notification with total including current live session
+        // Throttle to every 5 minutes to reduce churn
         if (service is AndroidServiceInstance) {
-          final int hours = totalMinutes ~/ 60;
-          final int minutes = totalMinutes % 60;
-          final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
-          
-          try {
-            service.setForegroundNotificationInfo(
-              title: 'TRIminder Tracking',
-              content: 'Today: $timeStr',
-            );
-          } catch (e) {
-            print('❌ Error updating notification: $e');
-            // Fallback to basic notification
-            service.setForegroundNotificationInfo(
-              title: 'TRIminder Tracking',
-              content: 'Today: $timeStr',
-            );
+          final nowTs = DateTime.now();
+          final shouldUpdate = serviceData.lastNotificationUpdate == null ||
+              nowTs.difference(serviceData.lastNotificationUpdate!) >= _foregroundNotificationInterval; // Throttle to every 5 minutes to reduce churn  
+          if (shouldUpdate) {
+            final int hours = totalMinutes ~/ 60;
+            final int minutes = totalMinutes % 60;
+            final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+            try {
+              service.setForegroundNotificationInfo(
+                title: 'TRIminder Tracking',
+                content: 'Today: $timeStr',
+              );
+            } catch (e) {
+              print('❌ Error updating notification: $e');
+              service.setForegroundNotificationInfo(
+                title: 'TRIminder Tracking',
+                content: 'Today: $timeStr',
+              );
+            }
+            serviceData.lastNotificationUpdate = nowTs;
           }
         }
 
@@ -586,7 +593,7 @@ class PersistentTrackerService {
         
 
       } catch (e) {
-        print('❌ Error in 3-second periodic task: $e');
+        print('❌ Error in 15-second periodic task: $e');
       }
     });
 
