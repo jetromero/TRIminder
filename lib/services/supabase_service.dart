@@ -855,4 +855,148 @@ class SupabaseService {
       }
     }
   }
+
+  // ---------------------------
+  // Rankings (daily/weekly/monthly)
+  // ---------------------------
+
+  /// Get daily rankings (ascending by total minutes). Requires table: user_usage_daily
+  Future<List<RankingEntry>> getDailyRankings({
+    DateTime? date,
+    int? departmentId,
+    List<String>? onlyUserIds,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      final targetDate = (date ?? DateTime.now()).toUtc();
+      final dateStr = DateTime(targetDate.year, targetDate.month, targetDate.day).toIso8601String().substring(0, 10); // YYYY-MM-DD
+
+      final base = _client
+          .from('user_usage_daily')
+          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id)')
+          .eq('usage_date', dateStr);
+
+      if (departmentId != null) {
+        // Apply related table filter before transform methods
+        base.eq('profiles.department_id', departmentId);
+      }
+
+      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
+        base.inFilter('user_id', onlyUserIds);
+      }
+
+      final rows = await base
+          .order('total_minutes', ascending: true)
+          .range(offset, offset + limit - 1);
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          valueMinutes: (row['total_minutes'] ?? 0) as int,
+          period: 'daily',
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching daily rankings: $e');
+      return [];
+    }
+  }
+
+  /// Get weekly rankings (ascending by avg minutes). Requires view: weekly_user_avg
+  Future<List<RankingEntry>> getWeeklyRankings({
+    int? departmentId,
+    List<String>? onlyUserIds,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      final base = _client
+          .from('weekly_user_avg')
+          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id)');
+
+      if (departmentId != null) {
+        base.eq('profiles.department_id', departmentId);
+      }
+
+      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
+        base.inFilter('user_id', onlyUserIds);
+      }
+
+      final rows = await base
+          .order('avg_minutes_7d', ascending: true)
+          .range(offset, offset + limit - 1);
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
+          period: 'weekly',
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching weekly rankings: $e');
+      return [];
+    }
+  }
+
+  /// Get monthly rankings (ascending by avg minutes). Requires view: monthly_user_avg
+  Future<List<RankingEntry>> getMonthlyRankings({
+    int? departmentId,
+    List<String>? onlyUserIds,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    try {
+      final base = _client
+          .from('monthly_user_avg')
+          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id)');
+
+      if (departmentId != null) {
+        base.eq('profiles.department_id', departmentId);
+      }
+
+      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
+        base.inFilter('user_id', onlyUserIds);
+      }
+
+      final rows = await base
+          .order('avg_minutes_30d', ascending: true)
+          .range(offset, offset + limit - 1);
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
+          period: 'monthly',
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching monthly rankings: $e');
+      return [];
+    }
+  }
+
+  /// Fetch departments (id, name)
+  Future<List<Map<String, dynamic>>> getDepartments() async {
+    try {
+      final rows = await _client
+          .from('departments')
+          .select('id, name')
+          .order('name');
+      return (rows as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      print('Error fetching departments: $e');
+      return [];
+    }
+  }
 }

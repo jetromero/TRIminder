@@ -312,3 +312,44 @@ class ScreenTimeLog {
     );
   }
 }
+
+// Ranking entry DTO for leaderboards
+class RankingEntry {
+  final String userId;
+  final String? userTag;
+  final String? fullName;
+  final int valueMinutes; // daily total or averaged minutes depending on period
+  final String period; // 'daily' | 'weekly' | 'monthly'
+  final int? departmentId;
+
+  RankingEntry({
+    required this.userId,
+    this.userTag,
+    this.fullName,
+    required this.valueMinutes,
+    required this.period,
+    this.departmentId,
+  });
+
+  factory RankingEntry.fromMap(Map<String, dynamic> map, {required String period}) {
+    return RankingEntry(
+      userId: map['user_id'] ?? map['id'] ?? map['userId'],
+      userTag: map['user_tag'] ?? map['userTag'],
+      fullName: map['full_name'] ?? map['fullName'],
+      valueMinutes: (map['total_minutes'] ?? map['avg_minutes'] ?? map['avg_minutes_7d'] ?? map['avg_minutes_30d'] ?? 0) as int,
+      period: period,
+      departmentId: (map['department_id'] ?? map['departmentId']) as int?,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'user_id': userId,
+      'user_tag': userTag,
+      'full_name': fullName,
+      'value_minutes': valueMinutes,
+      'period': period,
+      'department_id': departmentId,
+    };
+  }
+}

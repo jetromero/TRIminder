@@ -807,10 +807,10 @@ class _XPProgressCardState extends State<XPProgressCard> {
             SizedBox(height: ResponsiveUtils.getSpacing(context)),
             _buildLegendItem(context, '≤2 hours', '100 XP', 'Excellent 🏆', Colors.green),
             _buildLegendItem(context, '2-4 hours', '75 XP', 'Great 🥇', Colors.lightGreen),
-            _buildLegendItem(context, '4-6 hours', '50 XP', 'Good ��', Colors.orange),
+            _buildLegendItem(context, '4-6 hours', '50 XP', 'Good 🥈', Colors.orange),
             _buildLegendItem(context, '6-8 hours', '25 XP', 'Fair 🥉', Colors.deepOrange),
             _buildLegendItem(context, '8-10 hours', '10 XP', 'High ⚠️', Colors.red),
-            _buildLegendItem(context, '10+ hours', '0 XP', 'Excessive ��', Colors.red.shade800),
+            _buildLegendItem(context, '10+ hours', '0 XP', 'Excessive ⚠️', Colors.red.shade800),
           ],
         ),
         actions: [
@@ -1039,35 +1039,438 @@ class RecentBadgesCard extends StatelessWidget {
   }
 }
 
-class RankingsTab extends StatelessWidget {
+class RankingsTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
   const RankingsTab({super.key, required this.onSelectTab});
 
   @override
+  State<RankingsTab> createState() => _RankingsTabState();
+}
+
+class _RankingsTabState extends State<RankingsTab> {
+  int? _myDepartmentId;
+  String? _myDepartmentName;
+  bool _friendsOnly = false;
+  bool _globalScope = true; // EVSU (global) by default
+  int _reloadToken = 0;
+  int _scopeIndex = 0; // 0=EVSU,1=Department,2=Friends
+
+  // Period toggle
+  static const _periods = ['Daily', 'Weekly', 'Monthly'];
+  int _periodIndex = 0; // 0=daily,1=weekly,2=monthly
+  int _participantsCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _initMyDepartment();
+  }
+
+  Future<void> _initMyDepartment() async {
+    try {
+      final uid = SupabaseService().currentUserId;
+      if (uid == null) return;
+      final profile = await SupabaseService().getUserProfile(uid);
+      if (!mounted) return;
+      _myDepartmentId = profile?.departmentId;
+      if (_myDepartmentId != null) {
+        try {
+          final name = await SupabaseService().getDepartmentNameById(_myDepartmentId!);
+          if (mounted) {
+            setState(() {
+              _myDepartmentName = name;
+            });
+          }
+        } catch (_) {}
+      } else {
+        setState(() {});
+      }
+    } catch (_) {}
+  }
+
+  Future<List<String>> _getFriendIdsIfNeeded() async {
+    if (!_friendsOnly) return const [];
+    try {
+      final friends = await SupabaseService().getFriends();
+      final me = SupabaseService().currentUserId;
+      final ids = <String>{};
+      if (me != null) ids.add(me);
+      ids.addAll(friends.map((u) => u.id));
+      return ids.toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<RankingEntry>> _loadDaily() async {
+    final ids = await _getFriendIdsIfNeeded();
+    if (_friendsOnly && ids.isEmpty) return [];
+    final list = await SupabaseService().getDailyRankings(
+      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
+      onlyUserIds: _friendsOnly ? ids : null,
+      limit: 50,
+    );
+    if (_friendsOnly) {
+      final allowed = ids.toSet();
+      return list.where((e) => allowed.contains(e.userId)).toList();
+    }
+    return list;
+  }
+
+  Future<List<RankingEntry>> _loadWeekly() async {
+    final ids = await _getFriendIdsIfNeeded();
+    if (_friendsOnly && ids.isEmpty) return [];
+    final list = await SupabaseService().getWeeklyRankings(
+      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
+      onlyUserIds: _friendsOnly ? ids : null,
+      limit: 50,
+    );
+    if (_friendsOnly) {
+      final allowed = ids.toSet();
+      return list.where((e) => allowed.contains(e.userId)).toList();
+    }
+    return list;
+  }
+
+  Future<List<RankingEntry>> _loadMonthly() async {
+    final ids = await _getFriendIdsIfNeeded();
+    if (_friendsOnly && ids.isEmpty) return [];
+    final list = await SupabaseService().getMonthlyRankings(
+      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
+      onlyUserIds: _friendsOnly ? ids : null,
+      limit: 50,
+    );
+    if (_friendsOnly) {
+      final allowed = ids.toSet();
+      return list.where((e) => allowed.contains(e.userId)).toList();
+    }
+    return list;
+  }
+
+  Future<List<RankingEntry>> _loadByPeriodForScope({required bool global, required bool friends}) async {
+    final prevGlobal = _globalScope;
+    final prevFriends = _friendsOnly;
+    _globalScope = global;
+    _friendsOnly = friends;
+    try {
+      switch (_periodIndex) {
+        case 0:
+          return await _loadDaily();
+        case 1:
+          return await _loadWeekly();
+        case 2:
+        default:
+          return await _loadMonthly();
+      }
+    } finally {
+      _globalScope = prevGlobal;
+      _friendsOnly = prevFriends;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      drawer: _AppDrawer(onSelectTab: onSelectTab),
+    return DefaultTabController(
+      length: 3,
+      child: Scaffold(
+        drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
       appBar: AppBar(
         title: const Text('Rankings'),
+          bottom: TabBar(
+            onTap: (i) {
+              setState(() {
+                _scopeIndex = i;
+                _globalScope = i == 0;
+                _friendsOnly = i == 2;
+                _reloadToken++;
+              });
+            },
+            tabs: const [
+              Tab(text: 'EVSU'),
+              Tab(text: 'Department'),
+              Tab(text: 'Friends'),
+            ],
+          ),
+        ),
+        body: _RankingsContext(
+          showDepartmentUnderName: _scopeIndex == 0,
+          isDepartmentScope: _scopeIndex == 1,
+          child: Column(
+            children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                children: [
+                  if (_scopeIndex == 1 && _myDepartmentName != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Chip(
+                        label: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('${_myDepartmentName}'),
+                            Text(
+                              '$_participantsCount participants',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (_scopeIndex != 1)
+                    Text('$_participantsCount participants'),
+                  const Spacer(),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _periodIndex = (_periodIndex + 1) % _periods.length;
+                        _reloadToken++;
+                      });
+                    },
+                    icon: const Icon(Icons.schedule),
+                    label: Text(_periods[_periodIndex]),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  _RankingsList(
+                    loader: () => _loadByPeriodForScope(global: true, friends: false),
+                    onCount: (n) { if (_scopeIndex == 0) setState(() { _participantsCount = n; }); },
+                    reloadToken: _reloadToken,
+                  ),
+                  _RankingsList(
+                    loader: () => _loadByPeriodForScope(global: false, friends: false),
+                    onCount: (n) { if (_scopeIndex == 1) setState(() { _participantsCount = n; }); },
+                    reloadToken: _reloadToken,
+                  ),
+                  _RankingsList(
+                    loader: () => _loadByPeriodForScope(global: true, friends: true),
+                    onCount: (n) { if (_scopeIndex == 2) setState(() { _participantsCount = n; }); },
+                    reloadToken: _reloadToken,
+                  ),
+                ],
+              ),
+            ),
+            ],
+          ),
+        ),
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          await Future.delayed(const Duration(milliseconds: 300));
-        },
-        child: ListView(
+    );
+  }
+}
+
+class _RankingsList extends StatefulWidget {
+  final Future<List<RankingEntry>> Function() loader;
+  final int reloadToken;
+  final void Function(int count)? onCount;
+  const _RankingsList({required this.loader, required this.reloadToken, this.onCount});
+
+  @override
+  State<_RankingsList> createState() => _RankingsListState();
+}
+
+class _RankingsListState extends State<_RankingsList> {
+  late Future<List<RankingEntry>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.loader();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RankingsList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reloadToken != widget.reloadToken) {
+      setState(() {
+        _future = widget.loader();
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _future = widget.loader();
+    });
+    await _future;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: FutureBuilder<List<RankingEntry>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final data = snapshot.data ?? const [];
+          if (widget.onCount != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              widget.onCount!.call(data.length);
+            });
+          }
+          if (data.isEmpty) {
+            return ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
           children: const [
             SizedBox(height: 200),
-            Center(
+                Center(child: Text('No rankings yet')),
+              ],
+            );
+          }
+          return ListView.separated(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            itemCount: data.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final entry = data[index];
+              final rank = index + 1;
+              final name = entry.fullName ?? 'Unknown';
+              final formatted = _formatMinutes(entry.valueMinutes);
+              final isMe = SupabaseService().currentUserId == entry.userId;
+              return Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: isMe ? Theme.of(context).colorScheme.primary : Colors.transparent,
+                    width: isMe ? 1.2 : 0.5,
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 18,
+                        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                        child: Text('$rank', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
         child: Text(
-          'Rankings Coming Soon!',
-          style: TextStyle(fontSize: 18),
+                                    name,
+                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                                  ),
+                                ),
+                                if (isMe)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.primary,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    child: Text(
+                                      'You',
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
               ),
             ),
           ],
         ),
+                            if (_RankingsContext.of(context).showDepartmentUnderName && entry.departmentId != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: _DepartmentName(departmentId: entry.departmentId!),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(formatted, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                          Text('screen time', style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
+    );
+  }
+ 
+  String _formatMinutes(int minutes) {
+    if (minutes <= 0) return '0m';
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (hours > 0) {
+      return mins == 0 ? '${hours}h' : '${hours}h ${mins}m';
+    }
+    return '${mins}m';
+  }
+}
+
+// Simple ambient context for ranking rendering configuration
+class _RankingsContext extends InheritedWidget {
+  final bool showDepartmentUnderName;
+  final bool isDepartmentScope;
+  const _RankingsContext({
+    required this.showDepartmentUnderName,
+    required this.isDepartmentScope,
+    required super.child,
+  });
+
+  static _RankingsContext of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<_RankingsContext>() ??
+        const _RankingsContext(showDepartmentUnderName: true, isDepartmentScope: false, child: SizedBox.shrink());
+  }
+
+  @override
+  bool updateShouldNotify(covariant _RankingsContext oldWidget) {
+    return oldWidget.showDepartmentUnderName != showDepartmentUnderName || oldWidget.isDepartmentScope != isDepartmentScope;
+  }
+}
+
+class _DepartmentName extends StatefulWidget {
+  final int departmentId;
+  const _DepartmentName({required this.departmentId});
+
+  @override
+  State<_DepartmentName> createState() => _DepartmentNameState();
+}
+
+class _DepartmentNameState extends State<_DepartmentName> {
+  String? _name;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cached = await DatabaseService().getDepartmentName(widget.departmentId);
+    if (mounted && cached != null) {
+      setState(() { _name = cached; });
+      return;
+    }
+    final name = await SupabaseService().getDepartmentNameById(widget.departmentId);
+    if (mounted) setState(() { _name = name ?? 'Department'; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _name ?? '—',
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
     );
   }
 }
