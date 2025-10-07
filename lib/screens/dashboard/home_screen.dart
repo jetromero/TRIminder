@@ -1047,358 +1047,249 @@ class RankingsTab extends StatefulWidget {
   State<RankingsTab> createState() => _RankingsTabState();
 }
 
-class _RankingsTabState extends State<RankingsTab> {
+class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStateMixin {
+  String _scope = 'evsu'; // 'evsu' | 'department' | 'friends'
+  String _period = 'daily'; // 'daily' | 'weekly' | 'monthly'
+  bool _ascending = true; // ascending minutes (less is better)
+  bool _loading = false;
+  List<RankingEntry> _entries = [];
   int? _myDepartmentId;
-  String? _myDepartmentName;
-  bool _friendsOnly = false;
-  bool _globalScope = true; // EVSU (global) by default
-  int _reloadToken = 0;
-  int _scopeIndex = 0; // 0=EVSU,1=Department,2=Friends
-
-  // Period toggle
-  static const _periods = ['Daily', 'Weekly', 'Monthly'];
-  int _periodIndex = 0; // 0=daily,1=weekly,2=monthly
-  int _participantsCount = 0;
+  int _limit = 50;
+  int _offset = 0;
+  bool _hasMore = true;
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _initMyDepartment();
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) return;
+      final idx = _tabController.index;
+      final nextScope = idx == 0 ? 'evsu' : idx == 1 ? 'department' : 'friends';
+      if (_scope != nextScope) {
+        _scope = nextScope;
+        _fetchRankings(reset: true);
+      }
+    });
+    _loadMyDepartment();
+    _fetchRankings(reset: true);
   }
 
-  Future<void> _initMyDepartment() async {
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMyDepartment() async {
     try {
-      final uid = SupabaseService().currentUserId;
-      if (uid == null) return;
-      final profile = await SupabaseService().getUserProfile(uid);
-      if (!mounted) return;
-      _myDepartmentId = profile?.departmentId;
-      if (_myDepartmentId != null) {
-        try {
-          final name = await SupabaseService().getDepartmentNameById(_myDepartmentId!);
-          if (mounted) {
-            setState(() {
-              _myDepartmentName = name;
-            });
-          }
-        } catch (_) {}
-      } else {
-        setState(() {});
-      }
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return;
+      final profile = await SupabaseService().getUserProfile(userId);
+      setState(() { _myDepartmentId = profile?.departmentId; });
     } catch (_) {}
   }
 
-  Future<List<String>> _getFriendIdsIfNeeded() async {
-    if (!_friendsOnly) return const [];
+  Future<void> _fetchRankings({bool reset = false, bool forceCurrentPeriod = false}) async {
+    if (_loading) return;
+    setState(() { _loading = true; if (reset) { _offset = 0; _hasMore = true; _entries = []; } });
+
     try {
-      final friends = await SupabaseService().getFriends();
-      final me = SupabaseService().currentUserId;
-      final ids = <String>{};
-      if (me != null) ids.add(me);
-      ids.addAll(friends.map((u) => u.id));
-      return ids.toList();
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  Future<List<RankingEntry>> _loadDaily() async {
-    final ids = await _getFriendIdsIfNeeded();
-    if (_friendsOnly && ids.isEmpty) return [];
-    final list = await SupabaseService().getDailyRankings(
-      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
-      onlyUserIds: _friendsOnly ? ids : null,
-      limit: 50,
-    );
-    if (_friendsOnly) {
-      final allowed = ids.toSet();
-      return list.where((e) => allowed.contains(e.userId)).toList();
-    }
-    return list;
-  }
-
-  Future<List<RankingEntry>> _loadWeekly() async {
-    final ids = await _getFriendIdsIfNeeded();
-    if (_friendsOnly && ids.isEmpty) return [];
-    final list = await SupabaseService().getWeeklyRankings(
-      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
-      onlyUserIds: _friendsOnly ? ids : null,
-      limit: 50,
-    );
-    if (_friendsOnly) {
-      final allowed = ids.toSet();
-      return list.where((e) => allowed.contains(e.userId)).toList();
-    }
-    return list;
-  }
-
-  Future<List<RankingEntry>> _loadMonthly() async {
-    final ids = await _getFriendIdsIfNeeded();
-    if (_friendsOnly && ids.isEmpty) return [];
-    final list = await SupabaseService().getMonthlyRankings(
-      departmentId: _globalScope ? null : (_friendsOnly ? null : _myDepartmentId),
-      onlyUserIds: _friendsOnly ? ids : null,
-      limit: 50,
-    );
-    if (_friendsOnly) {
-      final allowed = ids.toSet();
-      return list.where((e) => allowed.contains(e.userId)).toList();
-    }
-    return list;
-  }
-
-  Future<List<RankingEntry>> _loadByPeriodForScope({required bool global, required bool friends}) async {
-    final prevGlobal = _globalScope;
-    final prevFriends = _friendsOnly;
-    _globalScope = global;
-    _friendsOnly = friends;
-    try {
-      switch (_periodIndex) {
-        case 0:
-          return await _loadDaily();
-        case 1:
-          return await _loadWeekly();
-        case 2:
-        default:
-          return await _loadMonthly();
+      // Department scope requires user's department
+      if (_scope == 'department' && _myDepartmentId == null) {
+            setState(() {
+          _entries = [];
+          _hasMore = false;
+        });
+        return;
       }
+
+      final svc = SupabaseService();
+      final depId = _scope == 'department' ? _myDepartmentId : null;
+      List<RankingEntry> page = [];
+
+      // Automatic period selection on reset (or when no period chosen) unless forcing current period
+      if ((reset || _entries.isEmpty) && !forceCurrentPeriod) {
+        final attemptOrder = ['daily', 'weekly', 'monthly'];
+        for (final p in attemptOrder) {
+          List<RankingEntry> tmp;
+          if (p == 'daily') {
+            tmp = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+          } else if (p == 'weekly') {
+            tmp = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+          } else {
+            tmp = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+          }
+          // Enforce department on client side just in case
+          if (_scope == 'department') {
+            tmp = tmp.where((e) => e.departmentId == _myDepartmentId).toList();
+          }
+          if (tmp.isNotEmpty) {
+            _period = p;
+            page = tmp;
+            _offset = tmp.length; // start after first page
+            break;
+          }
+        }
+        // If still empty (no data anywhere), keep period at daily
+        if (page.isEmpty) {
+          _period = 'daily';
+        }
+      } else if ((reset || _entries.isEmpty) && forceCurrentPeriod) {
+        // Respect user-selected current period when forced
+        if (_period == 'daily') {
+          page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0);
+        } else if (_period == 'weekly') {
+          page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0);
+        } else {
+          page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0);
+        }
+      } else {
+        // Keep using the chosen period for pagination
+        if (_period == 'daily') {
+          page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+        } else if (_period == 'weekly') {
+          page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+        } else {
+          page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+        }
+      }
+
+      // Client-side filter to enforce department in all periods (weekly/monthly views may lack FK joins)
+      if (_scope == 'department') {
+        page = page.where((e) => e.departmentId == _myDepartmentId).toList();
+      }
+
+      // Client-side sort by minutes to guarantee visual order regardless of backend
+      page.sort((a, b) => _ascending
+          ? a.valueMinutes.compareTo(b.valueMinutes)
+          : b.valueMinutes.compareTo(a.valueMinutes));
+
+      setState(() {
+        _entries.addAll(page);
+        _offset += page.length;
+        _hasMore = page.length == _limit;
+      });
     } finally {
-      _globalScope = prevGlobal;
-      _friendsOnly = prevFriends;
+      if (mounted) setState(() { _loading = false; });
     }
+  }
+
+  // Scope/period change handled by TabController and automatic period selection
+
+  Future<String?> _getDepartmentName(int? id) async {
+    if (id == null) return null;
+    try { return await DatabaseService().getDepartmentName(id); } catch (_) { return null; }
   }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 3,
-      child: Scaffold(
+    return Scaffold(
         drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
-      appBar: AppBar(
-        title: const Text('Rankings'),
-          bottom: TabBar(
-            onTap: (i) {
-              setState(() {
-                _scopeIndex = i;
-                _globalScope = i == 0;
-                _friendsOnly = i == 2;
-                _reloadToken++;
-              });
-            },
+      appBar: AppBar(title: const Text('Rankings')),
+      body: Column(
+            children: [
+          // Centered, swipable tabs: EVSU | Department | Friends
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: TabBar(
+              controller: _tabController,
             tabs: const [
               Tab(text: 'EVSU'),
               Tab(text: 'Department'),
               Tab(text: 'Friends'),
             ],
+              indicatorSize: TabBarIndicatorSize.tab,
+              labelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600),
+              unselectedLabelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w500),
+            ),
           ),
-        ),
-        body: _RankingsContext(
-          showDepartmentUnderName: _scopeIndex == 0,
-          isDepartmentScope: _scopeIndex == 1,
-          child: Column(
-            children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          // Second row: participants count (left) and period pill (right)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 children: [
-                  if (_scopeIndex == 1 && _myDepartmentName != null)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Chip(
-                        label: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('${_myDepartmentName}'),
-                            Text(
-                              '$_participantsCount participants',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (_scopeIndex != 1)
-                    Text('$_participantsCount participants'),
+                Text('${_entries.length} participants'),
                   const Spacer(),
-                  OutlinedButton.icon(
-                    onPressed: () {
+                Row(children: [
+                  _CurrentPeriodButton(
+                    period: _period,
+                    onCycle: () {
                       setState(() {
-                        _periodIndex = (_periodIndex + 1) % _periods.length;
-                        _reloadToken++;
+                        _period = _period == 'daily'
+                            ? 'weekly'
+                            : _period == 'weekly' ? 'monthly' : 'daily';
                       });
+                      _fetchRankings(reset: true, forceCurrentPeriod: true);
                     },
-                    icon: const Icon(Icons.schedule),
-                    label: Text(_periods[_periodIndex]),
                   ),
+                  const SizedBox(width: 8),
+                  _SortToggleButton(
+                    ascending: _ascending,
+                    onToggle: () {
+                      setState(() { _ascending = !_ascending; });
+                      _fetchRankings(reset: true, forceCurrentPeriod: true);
+                    },
+                  ),
+                ]),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
+          const SizedBox(height: 12),
             Expanded(
               child: TabBarView(
+              controller: _tabController,
+              physics: const BouncingScrollPhysics(),
                 children: [
-                  _RankingsList(
-                    loader: () => _loadByPeriodForScope(global: true, friends: false),
-                    onCount: (n) { if (_scopeIndex == 0) setState(() { _participantsCount = n; }); },
-                    reloadToken: _reloadToken,
-                  ),
-                  _RankingsList(
-                    loader: () => _loadByPeriodForScope(global: false, friends: false),
-                    onCount: (n) { if (_scopeIndex == 1) setState(() { _participantsCount = n; }); },
-                    reloadToken: _reloadToken,
-                  ),
-                  _RankingsList(
-                    loader: () => _loadByPeriodForScope(global: true, friends: true),
-                    onCount: (n) { if (_scopeIndex == 2) setState(() { _participantsCount = n; }); },
-                    reloadToken: _reloadToken,
-                  ),
+                _buildRankingList(),
+                _buildRankingList(),
+                _buildRankingList(),
                 ],
               ),
             ),
             ],
           ),
+    );
+  }
+
+  Widget _buildRankingList() {
+    if (_scope == 'department' && _myDepartmentId == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text('No department assigned to your profile. Rankings unavailable.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium,
         ),
       ),
     );
-  }
-}
-
-class _RankingsList extends StatefulWidget {
-  final Future<List<RankingEntry>> Function() loader;
-  final int reloadToken;
-  final void Function(int count)? onCount;
-  const _RankingsList({required this.loader, required this.reloadToken, this.onCount});
-
-  @override
-  State<_RankingsList> createState() => _RankingsListState();
-}
-
-class _RankingsListState extends State<_RankingsList> {
-  late Future<List<RankingEntry>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = widget.loader();
-  }
-
-  @override
-  void didUpdateWidget(covariant _RankingsList oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.reloadToken != widget.reloadToken) {
-      setState(() {
-        _future = widget.loader();
-      });
     }
-  }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _future = widget.loader();
-    });
-    await _future;
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: _refresh,
-      child: FutureBuilder<List<RankingEntry>>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final data = snapshot.data ?? const [];
-          if (widget.onCount != null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              widget.onCount!.call(data.length);
-            });
-          }
-          if (data.isEmpty) {
-            return ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 200),
-                Center(child: Text('No rankings yet')),
-              ],
+      onRefresh: () async { await _fetchRankings(reset: true); },
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _entries.length + (_hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= _entries.length) {
+            _fetchRankings();
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator()),
             );
           }
-          return ListView.separated(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(16),
-            itemCount: data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final entry = data[index];
-              final rank = index + 1;
-              final name = entry.fullName ?? 'Unknown';
-              final formatted = _formatMinutes(entry.valueMinutes);
-              final isMe = SupabaseService().currentUserId == entry.userId;
-              return Card(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(
-                    color: isMe ? Theme.of(context).colorScheme.primary : Colors.transparent,
-                    width: isMe ? 1.2 : 0.5,
-                  ),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 18,
-                        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                        child: Text('$rank', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-        child: Text(
-                                    name,
-                                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-                                  ),
-                                ),
-                                if (isMe)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).colorScheme.primary,
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: Text(
-                                      'You',
-                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
-                            if (_RankingsContext.of(context).showDepartmentUnderName && entry.departmentId != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: _DepartmentName(departmentId: entry.departmentId!),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(formatted, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                          Text('screen time', style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+          final entry = _entries[index];
+          return FutureBuilder<String?>(
+            future: _getDepartmentName(entry.departmentId),
+            builder: (context, snapshot) {
+              final deptName = snapshot.data;
+              return _RankingTile(
+                rank: index + 1,
+                name: entry.fullName ?? entry.userTag ?? 'Unknown',
+                you: entry.userId == SupabaseService().currentUserId,
+                minutes: entry.valueMinutes,
+                department: deptName,
               );
             },
           );
@@ -1406,71 +1297,130 @@ class _RankingsListState extends State<_RankingsList> {
       ),
     );
   }
- 
-  String _formatMinutes(int minutes) {
-    if (minutes <= 0) return '0m';
-    final hours = minutes ~/ 60;
-    final mins = minutes % 60;
-    if (hours > 0) {
-      return mins == 0 ? '${hours}h' : '${hours}h ${mins}m';
-    }
-    return '${mins}m';
-  }
 }
 
-// Simple ambient context for ranking rendering configuration
-class _RankingsContext extends InheritedWidget {
-  final bool showDepartmentUnderName;
-  final bool isDepartmentScope;
-  const _RankingsContext({
-    required this.showDepartmentUnderName,
-    required this.isDepartmentScope,
-    required super.child,
-  });
+// (old custom scope tab removed; now using TabBar)
 
-  static _RankingsContext of(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<_RankingsContext>() ??
-        const _RankingsContext(showDepartmentUnderName: true, isDepartmentScope: false, child: SizedBox.shrink());
-  }
-
-  @override
-  bool updateShouldNotify(covariant _RankingsContext oldWidget) {
-    return oldWidget.showDepartmentUnderName != showDepartmentUnderName || oldWidget.isDepartmentScope != isDepartmentScope;
-  }
-}
-
-class _DepartmentName extends StatefulWidget {
-  final int departmentId;
-  const _DepartmentName({required this.departmentId});
-
-  @override
-  State<_DepartmentName> createState() => _DepartmentNameState();
-}
-
-class _DepartmentNameState extends State<_DepartmentName> {
-  String? _name;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final cached = await DatabaseService().getDepartmentName(widget.departmentId);
-    if (mounted && cached != null) {
-      setState(() { _name = cached; });
-      return;
-    }
-    final name = await SupabaseService().getDepartmentNameById(widget.departmentId);
-    if (mounted) setState(() { _name = name ?? 'Department'; });
-  }
+class _CurrentPeriodButton extends StatelessWidget {
+  final String period;
+  final VoidCallback onCycle;
+  const _CurrentPeriodButton({required this.period, required this.onCycle});
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      _name ?? '—',
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+    String label;
+    IconData icon;
+    if (period == 'daily') { label = 'Today'; icon = Icons.schedule; }
+    else if (period == 'weekly') { label = 'Weekly'; icon = Icons.calendar_view_week; }
+    else { label = 'Monthly'; icon = Icons.calendar_month; }
+
+    return InkWell(
+      onTap: onCycle,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 8),
+            Text(label),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SortToggleButton extends StatelessWidget {
+  final bool ascending;
+  final VoidCallback onToggle;
+  const _SortToggleButton({required this.ascending, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+        child: Icon(ascending ? Icons.arrow_upward : Icons.arrow_downward, size: 18),
+      ),
+    );
+  }
+}
+
+// (removed old _PeriodToggle, now using automatic period badge)
+
+class _RankingTile extends StatelessWidget {
+  final int rank;
+  final String name;
+  final bool you;
+  final int minutes;
+  final String? department;
+  const _RankingTile({
+    required this.rank,
+    required this.name,
+    required this.you,
+    required this.minutes,
+    this.department,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    final timeStr = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+
+              return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+                child: Padding(
+        padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+            CircleAvatar(radius: 18, child: Text('$rank')),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                  Row(children: [
+                    Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold))),
+                    if (you) Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text('You', style: TextStyle(fontSize: 12)),
+                    ),
+                  ]),
+                  const SizedBox(height: 2),
+                  Text(department ?? '—', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                Text(timeStr, style: const TextStyle(fontWeight: FontWeight.bold)),
+                const Text('screen time', style: TextStyle(fontSize: 12)),
+                        ],
+            )
+                    ],
+                  ),
+      ),
     );
   }
 }

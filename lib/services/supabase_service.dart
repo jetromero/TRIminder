@@ -864,9 +864,9 @@ class SupabaseService {
   Future<List<RankingEntry>> getDailyRankings({
     DateTime? date,
     int? departmentId,
-    List<String>? onlyUserIds,
     int limit = 100,
     int offset = 0,
+    bool ascending = true,
   }) async {
     try {
       final targetDate = (date ?? DateTime.now()).toUtc();
@@ -882,12 +882,8 @@ class SupabaseService {
         base.eq('profiles.department_id', departmentId);
       }
 
-      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
-        base.inFilter('user_id', onlyUserIds);
-      }
-
       final rows = await base
-          .order('total_minutes', ascending: true)
+          .order('total_minutes', ascending: ascending)
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
@@ -895,9 +891,9 @@ class SupabaseService {
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
           valueMinutes: (row['total_minutes'] ?? 0) as int,
           period: 'daily',
-          departmentId: profile != null ? profile['department_id'] as int? : null,
         );
       }).toList();
     } catch (e) {
@@ -909,9 +905,9 @@ class SupabaseService {
   /// Get weekly rankings (ascending by avg minutes). Requires view: weekly_user_avg
   Future<List<RankingEntry>> getWeeklyRankings({
     int? departmentId,
-    List<String>? onlyUserIds,
     int limit = 100,
     int offset = 0,
+    bool ascending = true,
   }) async {
     try {
       final base = _client
@@ -922,12 +918,8 @@ class SupabaseService {
         base.eq('profiles.department_id', departmentId);
       }
 
-      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
-        base.inFilter('user_id', onlyUserIds);
-      }
-
       final rows = await base
-          .order('avg_minutes_7d', ascending: true)
+          .order('avg_minutes_7d', ascending: ascending)
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
@@ -935,9 +927,9 @@ class SupabaseService {
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
           valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
           period: 'weekly',
-          departmentId: profile != null ? profile['department_id'] as int? : null,
         );
       }).toList();
     } catch (e) {
@@ -949,9 +941,9 @@ class SupabaseService {
   /// Get monthly rankings (ascending by avg minutes). Requires view: monthly_user_avg
   Future<List<RankingEntry>> getMonthlyRankings({
     int? departmentId,
-    List<String>? onlyUserIds,
     int limit = 100,
     int offset = 0,
+    bool ascending = true,
   }) async {
     try {
       final base = _client
@@ -962,12 +954,8 @@ class SupabaseService {
         base.eq('profiles.department_id', departmentId);
       }
 
-      if (onlyUserIds != null && onlyUserIds.isNotEmpty) {
-        base.inFilter('user_id', onlyUserIds);
-      }
-
       final rows = await base
-          .order('avg_minutes_30d', ascending: true)
+          .order('avg_minutes_30d', ascending: ascending)
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
@@ -975,27 +963,13 @@ class SupabaseService {
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
           valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
           period: 'monthly',
-          departmentId: profile != null ? profile['department_id'] as int? : null,
         );
       }).toList();
     } catch (e) {
       print('Error fetching monthly rankings: $e');
-      return [];
-    }
-  }
-
-  /// Fetch departments (id, name)
-  Future<List<Map<String, dynamic>>> getDepartments() async {
-    try {
-      final rows = await _client
-          .from('departments')
-          .select('id, name')
-          .order('name');
-      return (rows as List).cast<Map<String, dynamic>>();
-    } catch (e) {
-      print('Error fetching departments: $e');
       return [];
     }
   }

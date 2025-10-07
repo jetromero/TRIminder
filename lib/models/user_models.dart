@@ -318,17 +318,17 @@ class RankingEntry {
   final String userId;
   final String? userTag;
   final String? fullName;
+  final int? departmentId;
   final int valueMinutes; // daily total or averaged minutes depending on period
   final String period; // 'daily' | 'weekly' | 'monthly'
-  final int? departmentId;
 
   RankingEntry({
     required this.userId,
     this.userTag,
     this.fullName,
+    this.departmentId,
     required this.valueMinutes,
     required this.period,
-    this.departmentId,
   });
 
   factory RankingEntry.fromMap(Map<String, dynamic> map, {required String period}) {
@@ -336,9 +336,9 @@ class RankingEntry {
       userId: map['user_id'] ?? map['id'] ?? map['userId'],
       userTag: map['user_tag'] ?? map['userTag'],
       fullName: map['full_name'] ?? map['fullName'],
+      departmentId: map['department_id'] ?? map['departmentId'],
       valueMinutes: (map['total_minutes'] ?? map['avg_minutes'] ?? map['avg_minutes_7d'] ?? map['avg_minutes_30d'] ?? 0) as int,
       period: period,
-      departmentId: (map['department_id'] ?? map['departmentId']) as int?,
     );
   }
 
@@ -347,9 +347,9 @@ class RankingEntry {
       'user_id': userId,
       'user_tag': userTag,
       'full_name': fullName,
+      'department_id': departmentId,
       'value_minutes': valueMinutes,
       'period': period,
-      'department_id': departmentId,
     };
   }
 }
