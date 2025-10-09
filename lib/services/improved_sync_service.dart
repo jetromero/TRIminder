@@ -25,10 +25,15 @@ class ImprovedSyncService extends ChangeNotifier {
   Function()? _onSyncComplete;
 
   // Sync configuration
-  static const Duration _syncInterval = Duration(minutes: 5);
+  static Duration _syncInterval = Duration(minutes: 2);
   static const int _maxRetryAttempts = 3;
-  static const Duration _retryBaseDelay = Duration(seconds: 10);
+  static const Duration _retryBaseDelay = Duration(seconds: 5);
   static const Duration _initialSyncRange = Duration(days: 7); // Only download last week on first login
+  
+  /// Set custom sync interval (for runtime configuration)
+  static void setSyncInterval(Duration interval) {
+    _syncInterval = interval;
+  }
 
   // Getters
   bool get isSyncing => _isSyncing;

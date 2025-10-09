@@ -874,7 +874,7 @@ class SupabaseService {
 
       final base = _client
           .from('user_usage_daily')
-          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id)')
+          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
           .eq('usage_date', dateStr);
 
       if (departmentId != null) {
@@ -887,11 +887,13 @@ class SupabaseService {
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
         return RankingEntry(
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
           valueMinutes: (row['total_minutes'] ?? 0) as int,
           period: 'daily',
         );
@@ -912,7 +914,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('weekly_user_avg')
-          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id)');
+          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -923,11 +925,13 @@ class SupabaseService {
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
         return RankingEntry(
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
           valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
           period: 'weekly',
         );
@@ -948,7 +952,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('monthly_user_avg')
-          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id)');
+          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -959,11 +963,13 @@ class SupabaseService {
           .range(offset, offset + limit - 1);
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
         return RankingEntry(
           userId: row['user_id'] as String,
           userTag: profile != null ? profile['user_tag'] as String? : null,
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
           valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
           period: 'monthly',
         );

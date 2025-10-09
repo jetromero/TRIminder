@@ -319,6 +319,7 @@ class RankingEntry {
   final String? userTag;
   final String? fullName;
   final int? departmentId;
+  final String? departmentName;
   final int valueMinutes; // daily total or averaged minutes depending on period
   final String period; // 'daily' | 'weekly' | 'monthly'
 
@@ -327,6 +328,7 @@ class RankingEntry {
     this.userTag,
     this.fullName,
     this.departmentId,
+    this.departmentName,
     required this.valueMinutes,
     required this.period,
   });
@@ -337,6 +339,7 @@ class RankingEntry {
       userTag: map['user_tag'] ?? map['userTag'],
       fullName: map['full_name'] ?? map['fullName'],
       departmentId: map['department_id'] ?? map['departmentId'],
+      departmentName: map['department_name'] ?? map['departmentName'],
       valueMinutes: (map['total_minutes'] ?? map['avg_minutes'] ?? map['avg_minutes_7d'] ?? map['avg_minutes_30d'] ?? 0) as int,
       period: period,
     );
@@ -348,6 +351,7 @@ class RankingEntry {
       'user_tag': userTag,
       'full_name': fullName,
       'department_id': departmentId,
+      'department_name': departmentName,
       'value_minutes': valueMinutes,
       'period': period,
     };

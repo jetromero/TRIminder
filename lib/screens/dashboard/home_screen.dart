@@ -1178,10 +1178,6 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
 
   // Scope/period change handled by TabController and automatic period selection
 
-  Future<String?> _getDepartmentName(int? id) async {
-    if (id == null) return null;
-    try { return await DatabaseService().getDepartmentName(id); } catch (_) { return null; }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1280,18 +1276,12 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
             );
           }
           final entry = _entries[index];
-          return FutureBuilder<String?>(
-            future: _getDepartmentName(entry.departmentId),
-            builder: (context, snapshot) {
-              final deptName = snapshot.data;
-              return _RankingTile(
-                rank: index + 1,
-                name: entry.fullName ?? entry.userTag ?? 'Unknown',
-                you: entry.userId == SupabaseService().currentUserId,
-                minutes: entry.valueMinutes,
-                department: deptName,
-              );
-            },
+          return _RankingTile(
+            rank: index + 1,
+            name: entry.fullName ?? entry.userTag ?? 'Unknown',
+            you: entry.userId == SupabaseService().currentUserId,
+            minutes: entry.valueMinutes,
+            department: entry.departmentName,
           );
         },
       ),
