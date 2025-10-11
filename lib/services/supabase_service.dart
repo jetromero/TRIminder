@@ -869,8 +869,16 @@ class SupabaseService {
     bool ascending = true,
   }) async {
     try {
-      final targetDate = (date ?? DateTime.now()).toUtc();
+      // Fix timezone bug: Use local time instead of UTC to prevent date shifting
+      // For Philippines (UTC+8), this prevents showing yesterday's data until 8 AM
+      final targetDate = date ?? DateTime.now();
       final dateStr = DateTime(targetDate.year, targetDate.month, targetDate.day).toIso8601String().substring(0, 10); // YYYY-MM-DD
+      
+      // Debug logging for timezone verification
+      print('🌍 Daily rankings timezone debug:');
+      print('   Local time: ${DateTime.now()}');
+      print('   Target date: $targetDate');
+      print('   Date string: $dateStr');
 
       final base = _client
           .from('user_usage_daily')
