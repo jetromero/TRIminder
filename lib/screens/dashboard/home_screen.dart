@@ -4,6 +4,7 @@ import '../auth/login_screen.dart';
 import '../../services/supabase_service.dart';
 import '../../services/automatic_screen_tracker.dart';
 import '../../services/improved_sync_service.dart';
+import '../../services/sync_coordinator.dart';
 import '../../services/user_session_manager.dart';
 import '../../models/user_models.dart';
 import '../../utils/level_calculator.dart';
@@ -116,7 +117,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     _checkConnectivity();
     _loadUserData();
     _startAutomaticTracking();
-    _startRefreshTimer();
+    // _startRefreshTimer();
     _ensureBackgroundServiceRunning();
     _setupSyncCallback();
   }
@@ -173,49 +174,49 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     }
   }
 
-  void _startRefreshTimer() {
-    // Adjust interval based on connectivity
-    final interval = Duration(seconds: 5);  // 5 seconds
-    SimplifiedLogger.info('Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
-    _refreshTimer = Timer.periodic(interval, (_) {
-      SimplifiedLogger.verbose('${interval.inSeconds}-second refresh tick triggered');
-      _onRefreshTick();
-    });
-  }
+  // void _startRefreshTimer() {
+  //   // Adjust interval based on connectivity
+  //   final interval = Duration(seconds: 5);  // 5 seconds
+  //   SimplifiedLogger.info('Starting ${interval.inSeconds}-second refresh timer (offline: $_isOffline)');
+  //   _refreshTimer = Timer.periodic(interval, (_) {
+  //     SimplifiedLogger.verbose('${interval.inSeconds}-second refresh tick triggered');
+  //     _onRefreshTick();
+  //   });
+  // }
 
-  Future<void> _onRefreshTick() async {
-  try {
-    print('⏰ Dashboard refresh - updating data (offline: $_isOffline)');
-    
-    // Add timeout to prevent hanging
-    // Check for end of day first
-    await _automaticTracker.checkForEndOfDay();
-    
-    // Refresh tracker data
-    await _automaticTracker.refreshTodayData();
-    
-    // Reload background service data
-    await PersistentTrackerService.reloadTodayData();
-    
-    // Only perform sync if online
-    if (!_isOffline) {
-      await ImprovedSyncService().performSync();
-    } else {
-      print('📱 Skipping sync - offline mode');
-    }
-    
-    if (mounted) {
-      setState(() {});
-      print('🔄 Dashboard UI updated');
-    }
-  } catch (e) {
-    print('❌ Error in refresh (timeout or other): $e');
-    // Still update UI even if refresh fails
-    if (mounted) {
-      setState(() {});
-    }
-  }
-}
+  // Future<void> _onRefreshTick() async {
+  // try {
+  //     print('⏰ Dashboard refresh - updating data (offline: $_isOffline)');
+      
+  //     // Add timeout to prevent hanging
+  //     // Check for end of day first
+  //     await _automaticTracker.checkForEndOfDay();
+      
+  //     // Refresh tracker data
+  //     await _automaticTracker.refreshTodayData();
+      
+  //     // Reload background service data
+  //     await PersistentTrackerService.reloadTodayData();
+      
+  //     // Only perform sync if online
+  //     if (!_isOffline) {
+  //       await ImprovedSyncService().performSync();
+  //     } else {
+  //       print('📱 Skipping sync - offline mode');
+  //     }
+      
+  //     if (mounted) {
+  //       setState(() {});
+  //       print('🔄 Dashboard UI updated');
+  //     }
+  //   } catch (e) {
+  //     print('❌ Error in refresh (timeout or other): $e');
+  //     // Still update UI even if refresh fails
+  //     if (mounted) {
+  //       setState(() {});
+  //     }
+  //   }
+  // }
 
   // Manual refresh method for debugging
   Future<void> _manualRefresh() async {
@@ -299,11 +300,11 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
     try {
       print('🔄 Starting comprehensive refresh');
       
+      final coordinator = SyncCoordinator();
+      await coordinator.requestSync(() => ImprovedSyncService().performSync());
+      
       // Refresh tracker data
       await _automaticTracker.refreshTodayData();
-      
-      // Perform sync
-      await ImprovedSyncService().performSync();
       
       // Reload background service data
       await PersistentTrackerService.reloadTodayData();
@@ -581,7 +582,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(
             onRefresh: () async {
-              await _comprehensiveRefresh();
+              final coordinator = SyncCoordinator();
+              await coordinator.requestSync(() => ImprovedSyncService().performSync());
+              await _automaticTracker.refreshTodayData();
               if (mounted) setState(() {});
             },
             child: Center(

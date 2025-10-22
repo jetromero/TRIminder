@@ -5,6 +5,7 @@ import '../services/database_service.dart';
 import '../services/supabase_service.dart';
 import '../models/user_models.dart';
 import '../utils/app_logger.dart';
+import 'background_supabase_client.dart';
 
 /// Improved sync service with incremental timestamp-based synchronization
 /// Much more efficient than downloading all data on every login
@@ -116,7 +117,7 @@ class ImprovedSyncService extends ChangeNotifier {
   }
 
   /// Perform optimized sync based on context
-  Future<bool> performSync({bool showProgress = false, bool isInitialLogin = false}) async {
+  Future<bool> performSync({bool showProgress = false, bool isInitialLogin = false, bool isBackground = false}) async {
     if (_isSyncing) {
       AppLogger.warning('Sync already in progress, skipping', 'perform');
       return false;
@@ -143,6 +144,11 @@ class ImprovedSyncService extends ChangeNotifier {
         AppLogger.sync('Starting SMART INITIAL LOGIN SYNC #$_syncAttempts', 'login');
       } else {
         AppLogger.sync('Starting incremental sync attempt #$_syncAttempts', 'incremental');
+      }
+
+      // Ensure Supabase is ready in background
+      if (isBackground) {
+        await BackgroundSupabaseClient.ensureInitializedAndRecovered();
       }
 
       // Check authentication and connectivity

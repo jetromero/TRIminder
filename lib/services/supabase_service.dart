@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
 import '../services/database_service.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
@@ -59,6 +60,9 @@ class SupabaseService {
   Future<void> signOut() async {
     await _client.auth.signOut();
     _resetRateLimiting();
+    try {
+      await DatabaseService().setSyncMetadata('supabase_session_json', '');
+    } catch (_) {}
   }
 
   // Authentication methods with validation
@@ -95,6 +99,15 @@ class SupabaseService {
       
       // Reset rate limiting on successful login
       _resetRateLimiting();
+      
+      // Persist session JSON for background recovery
+      try {
+        final session = response.session ?? _client.auth.currentSession;
+        if (session != null) {
+          final sessionJson = jsonEncode(session.toJson());
+          await DatabaseService().setSyncMetadata('supabase_session_json', sessionJson);
+        }
+      } catch (_) {}
       
       return response;
     } catch (e) {

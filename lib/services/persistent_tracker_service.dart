@@ -13,6 +13,7 @@ import '../services/supabase_service.dart';
 import '../services/improved_sync_service.dart';
 import '../utils/simplified_logger.dart';
 import 'idle_detection_service.dart';
+import 'sync_coordinator.dart';
 
 
 /// Data wrapper class for service variables (enables reference passing)
@@ -911,11 +912,12 @@ class PersistentTrackerService {
       await db.insertScreenTimeEntry(log);
       print('💾 Session saved locally: ${minutes}m for user: $userId');
       
-      // Trigger sync attempt (will be handled by improved sync service)
+      // Trigger debounced background sync via coordinator
       try {
+        print("trying to sync in background. . .");
         final syncService = ImprovedSyncService();
-        // Don't await - let it run in background
-        syncService.performSync();
+        final coordinator = SyncCoordinator();
+        coordinator.requestSync(() => syncService.performSync(isBackground: true));
       } catch (e) {
         print('⚠️ Could not trigger sync: $e');
       }
