@@ -386,12 +386,25 @@ class ImprovedSyncService extends ChangeNotifier {
   /// Save cloud log to local database
   Future<void> _saveCloudToLocal(ScreenTimeLog cloudLog, DatabaseService db) async {
     try {
-      final localLog = cloudLog.copyWith(
-        id: DateTime.now().microsecondsSinceEpoch,
-        isSynced: true,
+      // Check if already exists
+      final existing = await db.getScreenTimeLogByUserAndTime(
+        cloudLog.userId, 
+        cloudLog.startTime
       );
       
-      await db.insertScreenTimeEntry(localLog);
+      if (existing != null && existing.isSynced) {
+        // Already have this synced data, skip to prevent duplicate
+        return;
+      }
+      
+      if (existing == null) {
+        // Truly new data, insert it
+        final localLog = cloudLog.copyWith(
+          id: DateTime.now().microsecondsSinceEpoch,
+          isSynced: true,
+        );
+        await db.insertScreenTimeEntry(localLog);
+      }
     } catch (e) {
       print('❌ Error saving cloud log locally: $e');
     }
@@ -400,12 +413,27 @@ class ImprovedSyncService extends ChangeNotifier {
   /// Update local log with cloud version
   Future<void> _updateLocalFromCloud(ScreenTimeLog cloudLog, DatabaseService db) async {
     try {
-      final localLog = cloudLog.copyWith(
-        id: DateTime.now().microsecondsSinceEpoch,
-        isSynced: true,
+      // Find existing record
+      final existing = await db.getScreenTimeLogByUserAndTime(
+        cloudLog.userId,
+        cloudLog.startTime
       );
       
-      await db.insertScreenTimeEntry(localLog);
+      if (existing != null) {
+        // UPDATE existing record instead of inserting new one
+        final updated = cloudLog.copyWith(
+          id: existing.id,  // Keep original ID
+          isSynced: true,
+        );
+        await db.updateScreenTimeLog(updated);
+      } else {
+        // Doesn't exist locally, insert it
+        final localLog = cloudLog.copyWith(
+          id: DateTime.now().microsecondsSinceEpoch,
+          isSynced: true,
+        );
+        await db.insertScreenTimeEntry(localLog);
+      }
     } catch (e) {
       print('❌ Error updating local from cloud: $e');
     }

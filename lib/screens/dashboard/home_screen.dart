@@ -583,7 +583,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         : RefreshIndicator(
             onRefresh: () async {
               final coordinator = SyncCoordinator();
-              await coordinator.requestSync(() => ImprovedSyncService().performSync());
+              coordinator.requestSync(() => ImprovedSyncService().performSync());
               await _automaticTracker.refreshTodayData();
               if (mounted) setState(() {});
             },

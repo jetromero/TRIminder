@@ -138,6 +138,12 @@ class DatabaseService {
           name TEXT NOT NULL
         )
       ''');
+      
+      // Add unique constraint to prevent duplicate screen time entries
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_screen_time_user_start_unique '
+        'ON screen_time_entries(userId, startTime)'
+      );
     } catch (e) {
       AppLogger.warning('Migration check failed', 'migrate', e);
     }
@@ -496,5 +502,21 @@ class DatabaseService {
   Future<void> closeDatabase() async {
     final db = await database;
     await db.close();
+  }
+
+  /// Get screen time log by user and start time for deduplication
+  Future<ScreenTimeLog?> getScreenTimeLogByUserAndTime(
+    String userId, 
+    DateTime startTime
+  ) async {
+    final db = await database;
+    final maps = await db.query(
+      'screen_time_entries',
+      where: 'userId = ? AND startTime = ?',
+      whereArgs: [userId, startTime.toIso8601String()],
+      limit: 1,
+    );
+    if (maps.isEmpty) return null;
+    return ScreenTimeLog.fromMap(maps.first);
   }
 }
