@@ -1,26 +1,40 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     
-    <!-- Permissions for background tracking and auto-start -->
+    <!-- Core permissions for background tracking and auto-start -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
-    <!-- For screen state detection -->
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Android 14+ foreground service type permission -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    
+    <!-- Notification permission (Android 13+ only) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" 
+        android:minSdkVersion="33" />
     
     <!-- Battery optimization bypass (Android 6.0+) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    
+    <!-- Exact alarm permission (Android 12+ for reliable timers) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" 
+        android:minSdkVersion="31" />
     
     <!-- Auto-start permissions for various manufacturers -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.QUICKBOOT_POWERON" />
     
+    <!-- Tecno-specific autostart permissions -->
+    <uses-permission android:name="android.permission.AUTOSTART" />
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND" />
+    
     <!-- Additional background permissions -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    
+    <!-- Screen state detection permission -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
     
     <application
         android:label="TRIminder"
@@ -51,23 +65,15 @@
         <!-- Background Service for persistent tracking -->
         <service
             android:name="id.flutter.flutter_background_service.BackgroundService"
-            android:foregroundServiceType="dataSync"
-            android:exported="true"
-            tools:replace="android:exported" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:replace="android:exported">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Screen time tracking for digital wellness" />
+        </service>
 
-        <!-- Boot receiver for auto-start -->
-        <receiver
-            android:name="com.triminder.BootReceiver"
-            android:enabled="true"
-            android:exported="true"
-            android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
-            <intent-filter android:priority="1000">
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.intent.action.PACKAGE_REPLACED" />
-                <data android:scheme="package" />
-            </intent-filter>
-        </receiver>
+        <!-- Boot receiver is handled by flutter_background_service plugin automatically -->
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

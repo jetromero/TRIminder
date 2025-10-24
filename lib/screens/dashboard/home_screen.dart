@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../auth/login_screen.dart';
+import '../settings/settings_screen.dart';
 import '../../services/supabase_service.dart';
 import '../../services/automatic_screen_tracker.dart';
 import '../../services/improved_sync_service.dart';
@@ -29,11 +30,13 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   bool _isNewUser = false;
   bool _showFriends = false;
+  bool _showSettings = false;
 
   List<Widget> get _screens => [
     DashboardTab(
       isNewUser: _isNewUser,
       onSelectTab: _handleSelectTab,
+      currentIndex: _currentIndex,
     ),
     RankingsTab(
       onSelectTab: _handleSelectTab,
@@ -47,9 +50,14 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       if (index == 100) {
         _showFriends = true;
+        _showSettings = false;
+      } else if (index == 200) {
+        _showSettings = true;
+        _showFriends = false;
       } else {
         _currentIndex = index;
         _showFriends = false;
+        _showSettings = false;
       }
     });
   }
@@ -65,6 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: _showFriends
           ? FriendsTab(onSelectTab: _handleSelectTab)
+          : _showSettings
+              ? SettingsScreen(onSelectTab: _handleSelectTab)
           : _screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
@@ -72,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _currentIndex = index;
             _showFriends = false;
+            _showSettings = false;
           });
         },
         items: const [
@@ -96,7 +107,13 @@ class _HomeScreenState extends State<HomeScreen> {
 class DashboardTab extends StatefulWidget {
   final bool isNewUser;
   final ValueChanged<int> onSelectTab;
-  const DashboardTab({super.key, this.isNewUser = false, required this.onSelectTab});
+  final int currentIndex;
+  const DashboardTab({
+    super.key, 
+    this.isNewUser = false, 
+    required this.onSelectTab,
+    this.currentIndex = 0,
+  });
 
   @override
   State<DashboardTab> createState() => _DashboardTabState();
@@ -558,7 +575,10 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
+      drawer: _AppDrawer(
+        onSelectTab: widget.onSelectTab,
+        currentScreenIndex: widget.currentIndex,
+      ),
       appBar: AppBar(
         title: Text(
           'Dashboard',
@@ -1185,7 +1205,10 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
+        drawer: _AppDrawer(
+          onSelectTab: widget.onSelectTab,
+          currentScreenIndex: 1, // Rankings tab
+        ),
       appBar: AppBar(title: const Text('Rankings')),
       body: Column(
             children: [
@@ -1425,7 +1448,10 @@ class FriendsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      drawer: _AppDrawer(onSelectTab: onSelectTab),
+      drawer: _AppDrawer(
+        onSelectTab: onSelectTab,
+        currentScreenIndex: 100, // Friends tab
+      ),
       appBar: AppBar(
         title: const Text('Friends'),
       ),
@@ -1870,7 +1896,10 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      drawer: _AppDrawer(onSelectTab: widget.onSelectTab),
+      drawer: _AppDrawer(
+        onSelectTab: widget.onSelectTab,
+        currentScreenIndex: 2, // Profile tab
+      ),
       appBar: AppBar(
         title: const Text('Profile'),
       ),
@@ -2040,7 +2069,12 @@ Widget _kv(String label, String value) {
 /// App-wide navigation drawer used across tabs
 class _AppDrawer extends StatelessWidget {
   final ValueChanged<int> onSelectTab;
-  const _AppDrawer({required this.onSelectTab});
+  final int currentScreenIndex;
+  
+  const _AppDrawer({
+    required this.onSelectTab,
+    this.currentScreenIndex = 0, // Default to Dashboard
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2064,36 +2098,54 @@ class _AppDrawer extends StatelessWidget {
                 ),
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.dashboard),
-              title: const Text('Dashboard'),
+            _buildNavItem(
+              context: context,
+              icon: Icons.dashboard,
+              title: 'Dashboard',
+              index: 0,
               onTap: () {
                 Navigator.of(context).pop();
                 onSelectTab(0);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.leaderboard),
-              title: const Text('Rankings'),
+            _buildNavItem(
+              context: context,
+              icon: Icons.leaderboard,
+              title: 'Rankings',
+              index: 1,
               onTap: () {
                 Navigator.of(context).pop();
                 onSelectTab(1);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.group),
-              title: const Text('Friends'),
+            _buildNavItem(
+              context: context,
+              icon: Icons.group,
+              title: 'Friends',
+              index: 100,
               onTap: () {
                 Navigator.of(context).pop();
                 onSelectTab(100);
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.person),
-              title: const Text('Profile'),
+            _buildNavItem(
+              context: context,
+              icon: Icons.person,
+              title: 'Profile',
+              index: 2,
               onTap: () {
                 Navigator.of(context).pop();
                 onSelectTab(2);
+              },
+            ),
+            _buildNavItem(
+              context: context,
+              icon: Icons.settings,
+              title: 'Settings',
+              index: 200,
+              onTap: () {
+                Navigator.of(context).pop();
+                onSelectTab(200);
               },
             ),
             const Spacer(),
@@ -2163,6 +2215,46 @@ class _AppDrawer extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required int index,
+    required VoidCallback onTap,
+  }) {
+    final isSelected = currentScreenIndex == index;
+    
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        color: isSelected 
+          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+          : Colors.transparent,
+      ),
+      child: ListTile(
+        leading: Icon(
+          icon,
+          color: isSelected 
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.onSurface,
+        ),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: isSelected 
+              ? Theme.of(context).colorScheme.primary
+              : Theme.of(context).colorScheme.onSurface,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+        selected: isSelected,
+        selectedTileColor: Colors.transparent,
+        onTap: onTap,
       ),
     );
   }

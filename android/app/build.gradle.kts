@@ -14,12 +14,12 @@ android {
 
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_21.toString()
+        jvmTarget = "17"
     }
 
     defaultConfig {
@@ -27,13 +27,17 @@ android {
         applicationId = "com.triminder"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        minSdk = 26  // Android 8.0 (API 26) for better stability and notification channels
+        targetSdk = 35  // Android 15 (API 35) for latest features and compatibility
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         
         // Fix for androidx.window dependency issues
         multiDexEnabled = true
+        
+        // Android 15 compatibility flags
+        manifestPlaceholders["android:allowBackup"] = "false"
+        manifestPlaceholders["android:dataExtractionRules"] = "@xml/data_extraction_rules"
     }
 
     buildTypes {

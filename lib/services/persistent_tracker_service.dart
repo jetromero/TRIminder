@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter/widgets.dart';
@@ -12,6 +13,7 @@ import '../services/database_service.dart';
 import '../services/supabase_service.dart';
 import '../services/improved_sync_service.dart';
 import '../utils/simplified_logger.dart';
+import '../utils/battery_optimization_helper.dart';
 import 'idle_detection_service.dart';
 import 'sync_coordinator.dart';
 
@@ -310,54 +312,46 @@ class PersistentTrackerService {
   
   /// Request necessary permissions for background operation
   static Future<bool> _requestPermissions() async {
-    final permissions = [
-      Permission.notification,
-      Permission.systemAlertWindow, // For screen state detection
-      Permission.phone, // For device state monitoring
-      Permission.ignoreBatteryOptimizations, // 🔥 Critical for background survival
-    ];
-
-    // Request permissions
-    Map<Permission, PermissionStatus> statuses = await permissions.request();
+    // Core permissions needed for background operation
+    final permissions = <Permission>[];
     
-    // Check if all required permissions are granted
-    bool allGranted = statuses.values.every(
-      (status) => status == PermissionStatus.granted
-    );
-
-    if (!allGranted) {
-      print('⚠️ Some permissions not granted: $statuses');
-      
-      // Try to request battery optimization bypass again if denied
-      if (statuses[Permission.ignoreBatteryOptimizations] != PermissionStatus.granted) {
-        print('🔋 CRITICAL: Battery optimization bypass denied - app will be killed during sleep!');
-        print('🔋 Please manually enable "Allow background activity" in device settings');
-        
-        // Try one more time with a delay
-        await Future.delayed(const Duration(seconds: 2));
-        final retryResult = await Permission.ignoreBatteryOptimizations.request();
-        if (retryResult == PermissionStatus.granted) {
-          print('✅ Battery optimization bypass granted on retry');
-          allGranted = true;
-        } else {
-          print('❌ Battery optimization bypass still denied - app will not survive background');
-        }
-      }
-    } else {
-      print('✅ All permissions granted');
+    // Add notification permission only for Android 13+ (API 33+)
+    if (Platform.isAndroid) {
+      permissions.add(Permission.notification);
     }
 
-    // Request auto-start permission (for some Android devices)
+    // Request basic permissions
+    Map<Permission, PermissionStatus> statuses = {};
+    if (permissions.isNotEmpty) {
+      statuses = await permissions.request();
+      
+      // Log permission results
+      statuses.forEach((permission, status) {
+        print('   ${permission.toString().split('.').last}: $status');
+      });
+    }
+
+    // Handle battery optimization with manufacturer-specific guidance
     try {
-      final autoStartStatus = await Permission.ignoreBatteryOptimizations.status;
-      if (autoStartStatus == PermissionStatus.granted) {
-        print('✅ Auto-start permission available');
+      final result = await BatteryOptimizationHelper.requestBatteryOptimizationBypass();
+      if (result.success) {
+        print('✅ Battery optimization bypassed successfully');
+        return true;
+        } else {
+        print('⚠️ Battery optimization bypass failed: ${result.message}');
+        if (result.requiresManualSetup) {
+          print('🔋 CRITICAL: Manual setup required for ${result.manufacturer ?? 'your device'}');
+          print('🔋 Deep link: ${result.deepLink ?? 'Not available'}');
+          if (result.instructions != null) {
+            print('🔋 Instructions: ${result.instructions!.length} steps available');
+          }
+        }
+        return false;
       }
     } catch (e) {
-      print('⚠️ Auto-start permission not available: $e');
+      print('❌ Error requesting battery optimization: $e');
+      return false;
     }
-
-    return allGranted;
   }
 
   /// Check device motion status

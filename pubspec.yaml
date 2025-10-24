@@ -63,6 +63,12 @@ dependencies:
   # For environment variables
   flutter_dotenv: ^5.1.0
   crypto: ^3.0.3
+  
+  # For launching URLs and deep links
+  url_launcher: ^6.2.2
+  
+  # For device information and manufacturer detection
+  device_info_plus: ^10.1.0
 
 dev_dependencies:
   flutter_test:
