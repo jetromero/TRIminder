@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io';
 import '../utils/battery_optimization_helper.dart';
+import '../utils/android_permission_helper.dart';
 
 /// Service to handle first-time setup and automatic background configuration
 class FirstTimeSetupService {
@@ -60,6 +61,10 @@ class FirstTimeSetupService {
   }
 
   /// Request all necessary permissions for background operation
+  /// Android 8.0+ (API 26+): Notification channels, battery optimization
+  /// Android 12+ (API 31+): Exact alarm permission
+  /// Android 13+ (API 33+): Notification permission
+  /// All versions: USAGE_STATS permission (for screen state detection)
   static Future<void> _requestAllPermissions() async {
     print('🔐 Requesting permissions...');
 
@@ -69,8 +74,16 @@ class FirstTimeSetupService {
       
       // Add notification permission only for Android 13+ (API 33+)
       if (Platform.isAndroid) {
-        // Check if we're on Android 13+ for notification permission
-        permissions.add(Permission.notification);
+        try {
+          final androidInfo = await DeviceInfoPlugin().androidInfo;
+          if (androidInfo.version.sdkInt >= 33) {
+            permissions.add(Permission.notification);
+          }
+        } catch (e) {
+          print('⚠️ Error checking Android version for notification permission: $e');
+          // Default to requesting notification permission if version check fails
+          permissions.add(Permission.notification);
+        }
       }
 
       // Request basic permissions with error handling
@@ -88,6 +101,39 @@ class FirstTimeSetupService {
         }
       }
 
+      // Request exact alarm permission (Android 12+)
+      if (Platform.isAndroid) {
+        try {
+          final androidInfo = await DeviceInfoPlugin().androidInfo;
+          if (androidInfo.version.sdkInt >= 31) {
+            print('📱 Requesting exact alarm permission (Android 12+)...');
+            final exactAlarmGranted = await AndroidPermissionHelper.requestExactAlarmPermission();
+            if (exactAlarmGranted) {
+              print('✅ Exact alarm permission request launched');
+            } else {
+              print('⚠️ Failed to launch exact alarm permission settings');
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error requesting exact alarm permission: $e');
+        }
+      }
+
+      // Request USAGE_STATS permission (optional, for enhanced screen state detection)
+      if (Platform.isAndroid) {
+        try {
+          print('📱 Checking USAGE_STATS permission...');
+          final usageStatsGranted = await AndroidPermissionHelper.requestUsageStatsPermission();
+          if (usageStatsGranted) {
+            print('✅ USAGE_STATS permission request launched');
+          } else {
+            print('⚠️ Failed to launch USAGE_STATS permission settings');
+          }
+        } catch (e) {
+          print('⚠️ Error requesting USAGE_STATS permission: $e');
+        }
+      }
+
       // Request battery optimization bypass with manufacturer-specific guidance
       await _requestBatteryOptimizationBypass();
       
@@ -96,6 +142,7 @@ class FirstTimeSetupService {
       // Don't throw - continue with setup even if permissions fail
     }
   }
+
 
   /// Request battery optimization bypass with enhanced error handling
   static Future<void> _requestBatteryOptimizationBypass() async {
@@ -160,6 +207,10 @@ class FirstTimeSetupService {
   }
 
   /// Check if setup is optimal for background tracking
+  /// Android 8.0+ (API 26+): Notification channels, battery optimization
+  /// Android 12+ (API 31+): Exact alarm permission
+  /// Android 13+ (API 33+): Notification permission
+  /// All versions: USAGE_STATS permission (for screen state detection)
   static Future<Map<String, dynamic>> checkSetupStatus() async {
     final results = <String, dynamic>{};
     
@@ -168,31 +219,67 @@ class FirstTimeSetupService {
     
     // Only check notification permission on Android 13+ (API 33+)
     bool notificationGranted = false;
+    bool exactAlarmGranted = false;
+    bool usageStatsGranted = false;
+    
     if (Platform.isAndroid) {
       try {
         final androidInfo = await DeviceInfoPlugin().androidInfo;
-        if (androidInfo.version.sdkInt >= 33) {
+        final sdkInt = androidInfo.version.sdkInt;
+        
+        // Check notification permission (Android 13+)
+        if (sdkInt >= 33) {
           final notificationStatus = await Permission.notification.status;
           notificationGranted = notificationStatus == PermissionStatus.granted;
         } else {
           notificationGranted = true; // Not required on older versions
         }
+        
+        // Check exact alarm permission (Android 12+)
+        if (sdkInt >= 31) {
+          exactAlarmGranted = await AndroidPermissionHelper.isExactAlarmPermissionGranted();
+        } else {
+          exactAlarmGranted = true; // Not required on older versions
+        }
+        
+        // Check USAGE_STATS permission (all versions, but optional)
+        usageStatsGranted = await AndroidPermissionHelper.isUsageStatsPermissionGranted();
+        // Note: USAGE_STATS check may return false even if granted, as it requires native check
+        // We'll treat it as optional for now
       } catch (e) {
-        print('Error checking notification permission: $e');
-        notificationGranted = true; // Assume granted if check fails
+        print('Error checking permissions: $e');
+        // Assume granted if check fails to avoid blocking setup
+        notificationGranted = true;
+        exactAlarmGranted = true;
+        usageStatsGranted = false; // Default to false for USAGE_STATS as it's optional
       }
+    } else {
+      // Non-Android platforms
+      notificationGranted = true;
+      exactAlarmGranted = true;
+      usageStatsGranted = false;
     }
 
     results['permissions'] = {
       'notification': notificationGranted,
       'batteryOptimization': batteryStatus == PermissionStatus.granted,
+      'exactAlarm': exactAlarmGranted,
+      'usageStats': usageStatsGranted, // Optional, so don't block on this
     };
 
-    // Check if all permissions are granted
-    results['allPermissionsGranted'] = results['permissions'].values.every((granted) => granted == true);
+    // Check if all critical permissions are granted (USAGE_STATS is optional)
+    results['allPermissionsGranted'] = 
+        notificationGranted && 
+        batteryStatus == PermissionStatus.granted && 
+        exactAlarmGranted;
     
     // Check if background is configured
     results['backgroundConfigured'] = batteryStatus == PermissionStatus.granted;
+    
+    // Add optional permissions status
+    results['optionalPermissions'] = {
+      'usageStats': usageStatsGranted,
+    };
 
     return results;
   }

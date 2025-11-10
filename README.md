@@ -63,18 +63,21 @@ TRIminder is a Flutter-based digital wellness application that automatically tra
 TRIminder requires the following permissions for optimal functionality:
 
 ### Required Permissions
-- **Battery Optimization Bypass**: Critical for 24/7 background tracking
+- **Battery Optimization Bypass**: Critical for 24/7 background tracking (Android 6.0+)
 - **Internet**: For cloud synchronization and authentication
 - **Wake Lock**: Prevents device sleep during active tracking
 
 ### Optional Permissions
 - **Notifications** (Android 13+): For foreground service notifications
-- **Exact Alarm** (Android 12+): For reliable timer functionality
+- **Exact Alarm** (Android 12+): For reliable timer functionality (requires manual grant via Settings > Apps > Special app access > Alarms & reminders)
+- **USAGE_STATS**: For enhanced screen state detection (optional, requires manual grant via Settings > Apps > Special app access > Usage access)
 
 ### Permission Justification
 - **Battery Optimization**: Required to maintain background service for continuous screen time tracking
 - **Internet**: Used for user authentication and data synchronization with Supabase backend
 - **Wake Lock**: Ensures accurate session tracking without device sleep interference
+- **Exact Alarm**: Ensures reliable timer functionality for session tracking on Android 12+
+- **USAGE_STATS**: Optional permission for enhanced screen state detection (app works without it on most devices)
 
 ## Troubleshooting
 
@@ -148,6 +151,14 @@ TRIminder requires the following permissions for optimal functionality:
 - `lib/services/supabase_service.dart`: Cloud authentication and sync
 - `lib/services/database_service.dart`: Local data management
 - `lib/utils/battery_optimization_helper.dart`: Manufacturer-specific optimizations
+- `lib/utils/android_permission_helper.dart`: Android version-specific permission handling
+
+### Android Version Compatibility
+- **Android 8.0+ (API 26+)**: Full support with notification channels and background restrictions
+- **Android 12+ (API 31+)**: Exact alarm permission support for reliable timers
+- **Android 13+ (API 33+)**: Runtime notification permission support
+- **Android 14+ (API 34+)**: Foreground service type declarations
+- **Android 15+ (API 35+)**: Data extraction rules for backup/restore compliance
 
 ### Building for Production
 

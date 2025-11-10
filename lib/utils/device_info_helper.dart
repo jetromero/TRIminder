@@ -161,6 +161,15 @@ class DeviceInfoHelper {
   }
 
   /// Get device capabilities for feature detection
+  /// 
+  /// Android Version-Specific Features:
+  /// - API 23 (Android 6.0): Battery optimization introduced
+  /// - API 26 (Android 8.0): Notification channels, background restrictions, auto-start
+  /// - API 30 (Android 11): Stricter background restrictions
+  /// - API 31 (Android 12): Exact alarms require permission
+  /// - API 33 (Android 13): Runtime notification permission required
+  /// - API 34 (Android 14): Foreground service types required
+  /// - API 35 (Android 15): Data extraction rules required
   static Future<Map<String, bool>> getDeviceCapabilities() async {
     final sdkInt = await getAndroidSdkInt();
     

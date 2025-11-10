@@ -28,16 +28,15 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 26  // Android 8.0 (API 26) for better stability and notification channels
+        // Note: targetSdk 35 (Android 15) is very aggressive as Android 15 was just released
+        // Consider starting with targetSdk 34 (Android 14) for initial stability and testing
+        // Update to 35 after thorough testing on Android 15 devices
         targetSdk = 35  // Android 15 (API 35) for latest features and compatibility
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         
         // Fix for androidx.window dependency issues
         multiDexEnabled = true
-        
-        // Android 15 compatibility flags
-        manifestPlaceholders["android:allowBackup"] = "false"
-        manifestPlaceholders["android:dataExtractionRules"] = "@xml/data_extraction_rules"
     }
 
     buildTypes {

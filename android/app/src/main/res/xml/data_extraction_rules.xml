@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 15 (API 35) requires explicit data extraction rules for backup/restore.
+    This file defines what data can be extracted during device backup operations.
+    
+    TRIminder handles sensitive screen time data. Since android:allowBackup="false"
+    is set in AndroidManifest.xml, cloud backup is already disabled.
+    
+    This minimal configuration excludes all sensitive data from device transfer
+    to protect user privacy.
+    
+    Reference: https://developer.android.com/guide/topics/data/autobackup
+-->
+<data-extraction-rules>
+    <device-transfer>
+        <!-- Exclude all app data to protect sensitive screen time information -->
+        <!-- Users can re-authenticate and sync data through Supabase after device transfer -->
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+        <exclude domain="file" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
+

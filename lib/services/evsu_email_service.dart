@@ -1,7 +1,8 @@
-
+import 'not_evsu_email_bypass.dart';
 import 'supabase_service.dart';
+import '../config/app_config.dart';
 
-class EVSUEmailService {
+class EVSUEmailService extends NotEVSUEmailBypass {
   static final EVSUEmailService _instance = EVSUEmailService._internal();
   factory EVSUEmailService() => _instance;
   EVSUEmailService._internal();
@@ -68,7 +69,10 @@ class EVSUEmailService {
     }
     
     // Standard email format check
-    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
+    if (NotEVSUEmailBypass.isGmail(email) && AppConfig.allowBypass) {
+      return null; // Allow bypass
+    }
+    if (!NotEVSUEmailBypass.isGmail(email) && !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
       return 'Please enter a valid email address';
     }
     
@@ -93,6 +97,11 @@ class EVSUEmailService {
   /// Validation for login (less strict, just format)
   static String? validateEmailForLogin(String email) {
     email = email.trim();
+
+    // Allow Gmail bypass for development/testing if enabled
+    if (AppConfig.allowBypass && NotEVSUEmailBypass.isGmail(email)) {
+      return null; // Allow Gmail bypass
+    }
     
     if (email.isEmpty) {
       return 'Please enter your email';

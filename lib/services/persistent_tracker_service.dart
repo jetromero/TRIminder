@@ -8,12 +8,14 @@ import 'package:flutter_background_service_android/flutter_background_service_an
 import 'package:screen_state/screen_state.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import '../models/user_models.dart';
 import '../services/database_service.dart';
 import '../services/supabase_service.dart';
 import '../services/improved_sync_service.dart';
 import '../utils/simplified_logger.dart';
 import '../utils/battery_optimization_helper.dart';
+import '../utils/android_permission_helper.dart';
 import 'idle_detection_service.dart';
 import 'sync_coordinator.dart';
 
@@ -44,10 +46,16 @@ class _ServiceData {
 /// Persistent background service that runs automatically on device boot
 /// Tracks screen time 24/7 without user intervention
 /// Survives app closure, phone restarts, and system termination
+/// 
+/// Android Version Compatibility:
+/// - Android 8.0+ (API 26+): Requires notification channels for foreground service
+/// - Android 12+ (API 31+): Requires exact alarm permission for reliable timers
+/// - Android 13+ (API 33+): Requires runtime notification permission
+/// - Android 14+ (API 34+): Requires foreground service type declaration (specialUse)
 @pragma('vm:entry-point')
 class PersistentTrackerService {
   static const int _minRecordableSeconds = 180; // 3 minutes = 180 seconds
-  static const Duration _periodicTaskInterval = Duration(seconds: 15);
+  static const Duration _periodicTaskInterval = Duration(minutes: 1);
   static const Duration _foregroundNotificationInterval = Duration(minutes: 5);
   static const Duration _sessionTimeoutInterval = Duration(seconds: 10);
 
@@ -311,24 +319,77 @@ class PersistentTrackerService {
 
   
   /// Request necessary permissions for background operation
+  /// Android 8.0+ (API 26+): Notification channels, battery optimization
+  /// Android 12+ (API 31+): Exact alarm permission
+  /// Android 13+ (API 33+): Notification permission
+  /// All versions: USAGE_STATS permission (for screen state detection)
   static Future<bool> _requestPermissions() async {
     // Core permissions needed for background operation
     final permissions = <Permission>[];
     
     // Add notification permission only for Android 13+ (API 33+)
     if (Platform.isAndroid) {
-      permissions.add(Permission.notification);
+      try {
+        final androidInfo = await DeviceInfoPlugin().androidInfo;
+        if (androidInfo.version.sdkInt >= 33) {
+          permissions.add(Permission.notification);
+        }
+      } catch (e) {
+        print('⚠️ Error checking Android version for notification permission: $e');
+        // Default to requesting notification permission if version check fails
+        permissions.add(Permission.notification);
+      }
     }
 
     // Request basic permissions
     Map<Permission, PermissionStatus> statuses = {};
     if (permissions.isNotEmpty) {
-      statuses = await permissions.request();
-      
-      // Log permission results
-      statuses.forEach((permission, status) {
-        print('   ${permission.toString().split('.').last}: $status');
-      });
+      try {
+        statuses = await permissions.request();
+        
+        // Log permission results
+        statuses.forEach((permission, status) {
+          print('   ${permission.toString().split('.').last}: $status');
+        });
+      } catch (e) {
+        print('⚠️ Error requesting basic permissions: $e');
+      }
+    }
+
+    // Request exact alarm permission (Android 12+)
+    if (Platform.isAndroid) {
+      try {
+        final androidInfo = await DeviceInfoPlugin().androidInfo;
+        if (androidInfo.version.sdkInt >= 31) {
+          print('📱 Requesting exact alarm permission (Android 12+)...');
+          final exactAlarmGranted = await AndroidPermissionHelper.requestExactAlarmPermission();
+          if (exactAlarmGranted) {
+            print('✅ Exact alarm permission request launched');
+          } else {
+            print('⚠️ Failed to launch exact alarm permission settings');
+            print('💡 User may need to manually enable exact alarms in Settings');
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error requesting exact alarm permission: $e');
+      }
+    }
+
+    // Request USAGE_STATS permission (optional, for enhanced screen state detection)
+    // Note: This is handled by the screen_state plugin, but we provide guidance
+    if (Platform.isAndroid) {
+      try {
+        print('📱 Checking USAGE_STATS permission...');
+        final usageStatsGranted = await AndroidPermissionHelper.requestUsageStatsPermission();
+        if (usageStatsGranted) {
+          print('✅ USAGE_STATS permission request launched');
+        } else {
+          print('⚠️ Failed to launch USAGE_STATS permission settings');
+          print('💡 Screen state detection may work without USAGE_STATS on some devices');
+        }
+      } catch (e) {
+        print('⚠️ Error requesting USAGE_STATS permission: $e');
+      }
     }
 
     // Handle battery optimization with manufacturer-specific guidance

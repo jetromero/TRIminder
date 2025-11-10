@@ -19,7 +19,14 @@ class AppConfig {
     }
     return key;
   }
-  
+
+  static bool get allowBypass {
+    final bypass = dotenv.env['ALLOW_BYPASS'];
+    if (bypass != 'false') {
+      return true;
+    }
+    return false;
+  }
   // App Configuration
   static const int maxLoginAttempts = 5;
   static const Duration loginCooldown = Duration(minutes: 15);

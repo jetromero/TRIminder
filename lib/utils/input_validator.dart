@@ -1,5 +1,7 @@
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
+import '../config/app_config.dart';
+import '../services/not_evsu_email_bypass.dart';
 
 class InputValidator {
   // Email validation
@@ -9,6 +11,11 @@ class InputValidator {
     // Basic email format validation
     final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
     if (!emailRegex.hasMatch(email)) return false;
+    
+    // Allow Gmail bypass if enabled
+    if (AppConfig.allowBypass && NotEVSUEmailBypass.isGmail(email)) {
+      return true;
+    }
     
     // EVSU domain validation
     final evsuDomains = ['@evsu.edu.ph', '@student.evsu.edu.ph'];
