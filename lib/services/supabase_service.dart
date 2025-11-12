@@ -1000,4 +1000,159 @@ class SupabaseService {
       return [];
     }
   }
+
+  // ---------------------------
+  // Friends Rankings
+  // ---------------------------
+
+  /// Get friend IDs for the current user (including self)
+  Future<List<String>> _getFriendIds() async {
+    try {
+      final me = currentUserId;
+      if (me == null) return [];
+
+      // Get accepted friends
+      final rows = await _client
+          .from('friendships')
+          .select('user_a_id, user_b_id, status')
+          .eq('status', 'accepted')
+          .or('user_a_id.eq.$me,user_b_id.eq.$me');
+
+      final ids = <String>{me}; // Include current user
+      for (final r in rows) {
+        final ua = r['user_a_id'] as String;
+        final ub = r['user_b_id'] as String;
+        ids.add(ua == me ? ub : ua);
+      }
+      return ids.toList();
+    } catch (e) {
+      print('Error fetching friend IDs: $e');
+      return [];
+    }
+  }
+
+  /// Get daily rankings filtered by accepted friends
+  Future<List<RankingEntry>> getFriendsDailyRankings({
+    DateTime? date,
+    int limit = 100,
+    int offset = 0,
+    bool ascending = true,
+  }) async {
+    try {
+      final friendIds = await _getFriendIds();
+      if (friendIds.isEmpty) {
+        return [];
+      }
+
+      final targetDate = date ?? DateTime.now();
+      final dateStr = DateTime(targetDate.year, targetDate.month, targetDate.day).toIso8601String().substring(0, 10);
+
+      final base = _client
+          .from('user_usage_daily')
+          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .eq('usage_date', dateStr)
+          .inFilter('user_id', friendIds);
+
+      final rows = await base
+          .order('total_minutes', ascending: ascending)
+          .range(offset, offset + limit - 1);
+
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
+          valueMinutes: (row['total_minutes'] ?? 0) as int,
+          period: 'daily',
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching friends daily rankings: $e');
+      return [];
+    }
+  }
+
+  /// Get weekly rankings filtered by accepted friends
+  Future<List<RankingEntry>> getFriendsWeeklyRankings({
+    int limit = 100,
+    int offset = 0,
+    bool ascending = true,
+  }) async {
+    try {
+      final friendIds = await _getFriendIds();
+      if (friendIds.isEmpty) {
+        return [];
+      }
+
+      final base = _client
+          .from('weekly_user_avg')
+          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .inFilter('user_id', friendIds);
+
+      final rows = await base
+          .order('avg_minutes_7d', ascending: ascending)
+          .range(offset, offset + limit - 1);
+
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
+          valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
+          period: 'weekly',
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching friends weekly rankings: $e');
+      return [];
+    }
+  }
+
+  /// Get monthly rankings filtered by accepted friends
+  Future<List<RankingEntry>> getFriendsMonthlyRankings({
+    int limit = 100,
+    int offset = 0,
+    bool ascending = true,
+  }) async {
+    try {
+      final friendIds = await _getFriendIds();
+      if (friendIds.isEmpty) {
+        return [];
+      }
+
+      final base = _client
+          .from('monthly_user_avg')
+          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .inFilter('user_id', friendIds);
+
+      final rows = await base
+          .order('avg_minutes_30d', ascending: ascending)
+          .range(offset, offset + limit - 1);
+
+      return (rows as List).map((row) {
+        final profile = row['profiles'] as Map<String, dynamic>?;
+        final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
+        return RankingEntry(
+          userId: row['user_id'] as String,
+          userTag: profile != null ? profile['user_tag'] as String? : null,
+          fullName: profile != null ? profile['full_name'] as String? : null,
+          departmentId: profile != null ? profile['department_id'] as int? : null,
+          departmentName: department != null ? department['name'] as String? : null,
+          valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
+          period: 'monthly',
+        );
+      }).toList();
+    } catch (e) {
+      print('Error fetching friends monthly rankings: $e');
+      return [];
+    }
+  }
 }

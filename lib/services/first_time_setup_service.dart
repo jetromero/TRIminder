@@ -4,6 +4,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:io';
 import '../utils/battery_optimization_helper.dart';
 import '../utils/android_permission_helper.dart';
+import '../utils/app_hibernation_helper.dart';
 
 /// Service to handle first-time setup and automatic background configuration
 class FirstTimeSetupService {
@@ -134,8 +135,11 @@ class FirstTimeSetupService {
         }
       }
 
-      // Request battery optimization bypass with manufacturer-specific guidance
-      await _requestBatteryOptimizationBypass();
+      // Check battery optimization status and set pending flag if needed
+      await _checkBatteryOptimizationStatus();
+      
+      // Check app hibernation status (Android 12+)
+      await _checkAppHibernationStatus();
       
     } catch (e) {
       print('❌ Critical error in permission setup: $e');
@@ -144,25 +148,28 @@ class FirstTimeSetupService {
   }
 
 
-  /// Request battery optimization bypass with enhanced error handling
-  static Future<void> _requestBatteryOptimizationBypass() async {
+  /// Check battery optimization status and set pending flag if needed
+  static Future<void> _checkBatteryOptimizationStatus() async {
     try {
-      final result = await BatteryOptimizationHelper.requestBatteryOptimizationBypass();
-      if (result.success) {
-        print('✅ Battery optimization bypassed successfully');
-      } else {
-        print('⚠️ Battery optimization bypass failed: ${result.message}');
-        if (result.requiresManualSetup) {
-          print('💡 Manual setup required for ${result.manufacturer ?? 'your device'}');
-          print('   Deep link: ${result.deepLink ?? 'Not available'}');
-          if (result.instructions != null) {
-            print('   Instructions: ${result.instructions!.length} steps available');
-          }
+      final status = await BatteryOptimizationHelper.getBatteryOptimizationStatus();
+      if (!status.isBypassed) {
+        print('⚠️ Battery optimization not bypassed - will prompt user after login');
+        print('💡 Manual setup required for ${status.manufacturer}');
+        if (status.deepLink != null) {
+          print('   Deep link available: ${status.deepLink}');
         }
+        if (status.instructions != null) {
+          print('   Instructions available: ${status.instructions!.length} steps');
+        }
+        // Set pending flag to show dialog after login
+        await BatteryOptimizationHelper.setPromptPending();
+      } else {
+        print('✅ Battery optimization bypassed - background service will run continuously');
       }
     } catch (e) {
-      print('⚠️ Could not request battery optimization: $e');
-      // Continue with setup even if battery optimization fails
+      print('⚠️ Could not check battery optimization status: $e');
+      // Set pending flag anyway to ensure user sees the prompt
+      await BatteryOptimizationHelper.setPromptPending();
     }
   }
 
@@ -177,7 +184,7 @@ class FirstTimeSetupService {
         print('✅ Battery optimization bypassed - background service will run continuously');
         await markBackgroundConfigured();
       } else {
-        print('⚠️ Battery optimization not bypassed - user may need to manually configure');
+        print('⚠️ Battery optimization not bypassed - will prompt user after login');
         if (status.requiresAttention) {
           print('💡 Manual setup required for ${status.manufacturer}');
           if (status.deepLink != null) {
@@ -187,11 +194,48 @@ class FirstTimeSetupService {
             print('   Instructions available: ${status.instructions!.length} steps');
           }
         }
+        // Set pending flag to show dialog after login
+        await BatteryOptimizationHelper.setPromptPending();
       }
+
+      // Check app hibernation status (Android 12+)
+      await _checkAppHibernationStatus();
     } catch (e) {
       print('⚠️ Could not check battery optimization status: $e');
       // Continue with setup even if battery optimization check fails
       print('⚠️ Continuing with setup despite battery optimization check failure');
+      // Set pending flag anyway to ensure user sees the prompt
+      await BatteryOptimizationHelper.setPromptPending();
+    }
+  }
+
+  /// Check app hibernation status and provide guidance
+  static Future<void> _checkAppHibernationStatus() async {
+    try {
+      final hibernationStatus = await AppHibernationHelper.getAppHibernationStatus();
+      if (hibernationStatus.isAvailable) {
+        print('📱 App Hibernation feature detected (Android 12+)');
+        if (hibernationStatus.requiresAttention) {
+          print('⚠️ App Hibernation may affect background tracking');
+          print('💡 Manual setup required for ${hibernationStatus.manufacturer}');
+          if (hibernationStatus.deepLink != null) {
+            print('   Deep link available: ${hibernationStatus.deepLink}');
+          }
+          if (hibernationStatus.instructions != null) {
+            print('   Instructions available: ${hibernationStatus.instructions!.length} steps');
+            print('   First step: ${hibernationStatus.instructions!.first}');
+          }
+          // Auto-prompt the user via UI layer
+          await AppHibernationHelper.setPromptPending();
+        } else {
+          print('✅ App Hibernation configured - tracking should continue');
+        }
+      } else {
+        print('ℹ️ App Hibernation not available (Android < 12)');
+      }
+    } catch (e) {
+      print('⚠️ Could not check app hibernation status: $e');
+      // Continue with setup even if app hibernation check fails
     }
   }
 

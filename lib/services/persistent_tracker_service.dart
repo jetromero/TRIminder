@@ -392,26 +392,35 @@ class PersistentTrackerService {
       }
     }
 
-    // Handle battery optimization with manufacturer-specific guidance
+    // Check battery optimization status and set pending flag if needed
+    // Note: We don't auto-request here - user will be prompted after login
     try {
-      final result = await BatteryOptimizationHelper.requestBatteryOptimizationBypass();
-      if (result.success) {
-        print('✅ Battery optimization bypassed successfully');
+      final status = await BatteryOptimizationHelper.getBatteryOptimizationStatus();
+      if (status.isBypassed) {
+        print('✅ Battery optimization bypassed - background service will run continuously');
         return true;
-        } else {
-        print('⚠️ Battery optimization bypass failed: ${result.message}');
-        if (result.requiresManualSetup) {
-          print('🔋 CRITICAL: Manual setup required for ${result.manufacturer ?? 'your device'}');
-          print('🔋 Deep link: ${result.deepLink ?? 'Not available'}');
-          if (result.instructions != null) {
-            print('🔋 Instructions: ${result.instructions!.length} steps available');
+      } else {
+        print('⚠️ Battery optimization not bypassed - will prompt user after login');
+        if (status.requiresAttention) {
+          print('🔋 Manual setup required for ${status.manufacturer}');
+          if (status.deepLink != null) {
+            print('🔋 Deep link: ${status.deepLink}');
+          }
+          if (status.instructions != null) {
+            print('🔋 Instructions: ${status.instructions!.length} steps available');
           }
         }
-        return false;
+        // Set pending flag to show dialog after login (can't show dialog from background service)
+        await BatteryOptimizationHelper.setPromptPending();
+        // Still return true - service can start, just may not work optimally
+        return true;
       }
     } catch (e) {
-      print('❌ Error requesting battery optimization: $e');
-      return false;
+      print('❌ Error checking battery optimization status: $e');
+      // Set pending flag anyway to ensure user sees the prompt
+      await BatteryOptimizationHelper.setPromptPending();
+      // Still return true - service can start
+      return true;
     }
   }
 

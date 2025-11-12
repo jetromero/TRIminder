@@ -72,12 +72,16 @@ TRIminder requires the following permissions for optimal functionality:
 - **Exact Alarm** (Android 12+): For reliable timer functionality (requires manual grant via Settings > Apps > Special app access > Alarms & reminders)
 - **USAGE_STATS**: For enhanced screen state detection (optional, requires manual grant via Settings > Apps > Special app access > Usage access)
 
+### Android Features to Disable
+- **App Hibernation** (Android 12+): Also known as "Manage apps if unused" or "Put unused apps to sleep". This feature can automatically revoke permissions and stop background services for apps that haven't been used recently. **Must be disabled** for TRIminder to work properly.
+
 ### Permission Justification
 - **Battery Optimization**: Required to maintain background service for continuous screen time tracking
 - **Internet**: Used for user authentication and data synchronization with Supabase backend
 - **Wake Lock**: Ensures accurate session tracking without device sleep interference
 - **Exact Alarm**: Ensures reliable timer functionality for session tracking on Android 12+
 - **USAGE_STATS**: Optional permission for enhanced screen state detection (app works without it on most devices)
+- **App Hibernation**: Must be disabled to prevent Android from automatically revoking permissions and stopping background services when the app is unused
 
 ## Troubleshooting
 
@@ -93,9 +97,16 @@ TRIminder requires the following permissions for optimal functionality:
    - **Xiaomi**: Settings → Apps → Manage apps → TRIminder → Autostart
    - **Huawei**: Settings → Apps → Apps → TRIminder → Battery → "Allow background activity"
 
-3. **Inaccurate screen time tracking**
-   - **Solution**: Ensure all permissions are granted
+3. **App permissions revoked automatically (Android 12+)**
+   - **Solution**: Disable App Hibernation (also called "Manage apps if unused" or "Put unused apps to sleep")
+   - **Stock Android**: Settings → Apps → TRIminder → Unused apps → Turn OFF "Remove permissions and free up space"
+   - **Samsung**: Settings → Device care → Battery → Background app limits → Put unused apps to sleep → Remove TRIminder
+   - **See manufacturer-specific instructions below**
+
+4. **Inaccurate screen time tracking**
+   - **Solution**: Ensure all permissions are granted and app hibernation is disabled
    - **Check**: App settings → Permissions → All permissions enabled
+   - **Check**: App settings → Unused apps → App hibernation disabled
 
 #### Manufacturer-Specific Setup
 
@@ -104,21 +115,26 @@ TRIminder requires the following permissions for optimal functionality:
 2. Battery saver → "No restrictions"
 3. Autostart → Enable
 4. Battery optimization → "Don't optimize"
+5. Ensure TRIminder is not in "Sleeping apps" list
 
 **Huawei (EMUI)**
 1. Settings → Apps → Apps → TRIminder
 2. Battery → "Allow background activity"
 3. App launch → Manual (disable restrictions)
+4. Check that TRIminder is not in "App hibernation" list
 
 **Samsung (One UI)**
 1. Settings → Apps → TRIminder
 2. Battery → "Allow background activity"
 3. Device care → Battery → App power management → Unrestricted
+4. Device care → Battery → Background app limits → Put unused apps to sleep → Remove TRIminder from list
 
 **Oppo/Realme (ColorOS)**
 1. Settings → Apps → App management → TRIminder
 2. Battery → "Allow background activity"
 3. Background app management → Allow TRIminder
+4. Check that TRIminder is not in "Sleeping apps" list
+5. Disable "Freeze background apps" for TRIminder
 
 ### Data Sync Issues
 
@@ -151,11 +167,12 @@ TRIminder requires the following permissions for optimal functionality:
 - `lib/services/supabase_service.dart`: Cloud authentication and sync
 - `lib/services/database_service.dart`: Local data management
 - `lib/utils/battery_optimization_helper.dart`: Manufacturer-specific optimizations
+- `lib/utils/app_hibernation_helper.dart`: App hibernation detection and guidance (Android 12+)
 - `lib/utils/android_permission_helper.dart`: Android version-specific permission handling
 
 ### Android Version Compatibility
 - **Android 8.0+ (API 26+)**: Full support with notification channels and background restrictions
-- **Android 12+ (API 31+)**: Exact alarm permission support for reliable timers
+- **Android 12+ (API 31+)**: Exact alarm permission support for reliable timers, App Hibernation feature introduced (must be disabled)
 - **Android 13+ (API 33+)**: Runtime notification permission support
 - **Android 14+ (API 34+)**: Foreground service type declarations
 - **Android 15+ (API 35+)**: Data extraction rules for backup/restore compliance

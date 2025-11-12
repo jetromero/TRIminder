@@ -1,12 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'device_info_helper.dart';
 
 /// Helper class for handling battery optimization settings across different Android manufacturers
 /// Provides manufacturer-specific deep links and user guidance
 class BatteryOptimizationHelper {
+  static const String _promptFlagKey = 'pending_battery_optimization_prompt';
   
   /// Check if battery optimization is currently bypassed
   static Future<bool> isBatteryOptimizationBypassed() async {
@@ -138,7 +140,9 @@ class BatteryOptimizationHelper {
           '3. Go to Settings → Device care → Battery',
           '4. Tap "App power management" → Find TRIminder',
           '5. Set to "Unrestricted" or "Optimized"',
-          '6. Disable "Put unused apps to sleep" for TRIminder'
+          '6. Go to Settings → Device care → Battery → Background app limits',
+          '7. Tap "Put unused apps to sleep" → Remove TRIminder from the list',
+          '8. This prevents Android from hibernating TRIminder when unused'
         ];
       case 'oneplus':
         return [
@@ -175,60 +179,83 @@ class BatteryOptimizationHelper {
     }
   }
 
-  /// Launch manufacturer-specific battery settings
+  /// Launch battery optimization settings page directly
+  /// Opens the system battery optimization dialog for this app
   static Future<bool> launchBatterySettings() async {
-    try {
-      final manufacturer = await _getDeviceManufacturer();
-      final deepLink = _getManufacturerDeepLink(manufacturer);
-      
-      if (deepLink != null) {
-        final uri = Uri.parse(deepLink);
-        if (await canLaunchUrl(uri)) {
-          return await launchUrl(uri);
-        }
-      }
-      
-      // Fallback to generic battery settings
-      return await _launchGenericBatterySettings();
-    } catch (e) {
-      print('Error launching battery settings: $e');
-      return false;
-    }
-  }
-
-  /// Launch generic Android battery settings
-  static Future<bool> _launchGenericBatterySettings() async {
-    try {
-      final uri = Uri.parse('android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS');
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(uri);
-      }
-      
-      // Alternative generic settings
-      final altUri = Uri.parse('android.settings.BATTERY_OPTIMIZATION_SETTINGS');
-      if (await canLaunchUrl(altUri)) {
-        return await launchUrl(altUri);
-      }
-      
-      return false;
-    } catch (e) {
-      print('Error launching generic battery settings: $e');
-      return false;
-    }
-  }
-
-  /// Show battery optimization setup dialog
-  static Future<void> showBatteryOptimizationDialog(BuildContext context) async {
-    final result = await requestBatteryOptimizationBypass();
+    if (!Platform.isAndroid) return false;
     
-    if (!result.success && result.requiresManualSetup) {
-      showDialog(
+    try {
+      // Use native method channel to open battery optimization settings directly
+      // This opens the system battery optimization dialog for TRIminder
+      const MethodChannel settingsChannel = MethodChannel('com.triminder/settings');
+      final bool opened = await settingsChannel.invokeMethod<bool>('openBatteryOptimizationSettings') ?? false;
+      if (opened) return true;
+    } catch (e) {
+      print('Error opening battery optimization settings via method channel: $e');
+    }
+    
+    // Fallback: Try using permission handler to open battery optimization dialog
+    try {
+      await Permission.ignoreBatteryOptimizations.request();
+      return true;
+    } catch (e) {
+      print('Error opening battery optimization via permission handler: $e');
+    }
+    
+    return false;
+  }
+
+  /// Show battery optimization setup dialog (simple yes/no)
+  static Future<void> showBatteryOptimizationDialog(BuildContext context) async {
+    final status = await getBatteryOptimizationStatus();
+    
+    // Clear any pending prompt flag when dialog is shown
+    await clearPromptPending();
+    
+    if (status.requiresAttention && context.mounted) {
+      final shouldOpen = await showDialog<bool>(
         context: context,
-        builder: (context) => BatteryOptimizationDialog(
-          result: result,
+        builder: (context) => AlertDialog(
+          title: const Text('Battery Optimization'),
+          content: const Text(
+            'TRIminder needs battery optimization to be disabled for continuous tracking. '
+            'Would you like to open the settings now?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('No'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Yes'),
+            ),
+          ],
         ),
       );
+      
+      if (shouldOpen == true && context.mounted) {
+        await launchBatterySettings();
+      }
     }
+  }
+
+  /// Mark that we should auto-prompt the user about battery optimization
+  static Future<void> setPromptPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_promptFlagKey, true);
+  }
+
+  /// Clear the auto-prompt flag
+  static Future<void> clearPromptPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_promptFlagKey);
+  }
+
+  /// Check whether we should auto-prompt the user
+  static Future<bool> isPromptPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_promptFlagKey) ?? false;
   }
 
   /// Get battery optimization status for display
@@ -282,76 +309,3 @@ class BatteryOptimizationStatus {
   });
 }
 
-/// Dialog for showing battery optimization setup instructions
-class BatteryOptimizationDialog extends StatelessWidget {
-  final BatteryOptimizationResult result;
-
-  const BatteryOptimizationDialog({
-    super.key,
-    required this.result,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Battery Optimization Setup'),
-      content: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'For TRIminder to work properly, you need to disable battery optimization. '
-              'This ensures the app can track screen time even when the phone is idle.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-            if (result.instructions != null) ...[
-              const Text(
-                'Please follow these steps:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              ...result.instructions!.map((instruction) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  instruction,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              )),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('I\'ll do this later'),
-        ),
-        if (result.deepLink != null)
-          ElevatedButton(
-            onPressed: () async {
-              await BatteryOptimizationHelper.launchBatterySettings();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Open Settings'),
-          ),
-        ElevatedButton(
-          onPressed: () async {
-            final success = await BatteryOptimizationHelper.launchBatterySettings();
-            if (!success) {
-              // Show fallback instructions
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Please manually open Settings → Battery → Battery optimization'),
-                ),
-              );
-            }
-            Navigator.of(context).pop();
-          },
-          child: const Text('Try Again'),
-        ),
-      ],
-    );
-  }
-}

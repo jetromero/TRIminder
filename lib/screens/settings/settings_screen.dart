@@ -4,6 +4,8 @@ import '../../utils/responsive_utils.dart';
 import '../../services/supabase_service.dart';
 import '../../models/user_models.dart';
 import '../auth/login_screen.dart';
+import '../../config/app_config.dart';
+import '../../widgets/app_scaffold.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ValueChanged<int>? onSelectTab;
@@ -71,7 +73,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       appBar: AppBar(
         title: Text(
           'Settings',
@@ -93,6 +95,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   maxWidth: ResponsiveUtils.getMaxContentWidth(context),
                 ),
                 child: ListView(
+                  physics: const ClampingScrollPhysics(),
                   padding: ResponsiveUtils.getScreenPadding(context),
                   children: [
                     const SizedBox(height: 16),
@@ -343,7 +346,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            _buildInfoRow('Version', '1.0.0'),
+            _buildInfoRow('Version', AppConfig.appVersion),
             _buildInfoRow('Build', '1'),
             _buildInfoRow('Platform', 'Android'),
             const SizedBox(height: 8),
@@ -469,7 +472,11 @@ class _AppDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final drawerWidth = screenWidth * 0.75; // 75% of screen width
+    
     return Drawer(
+      width: drawerWidth,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import '../utils/battery_optimization_helper.dart';
+import '../utils/app_hibernation_helper.dart';
 
 /// Widget that displays permission status and provides management options
 class PermissionStatusWidget extends StatefulWidget {
@@ -23,7 +24,19 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
   @override
   void initState() {
     super.initState();
-    _loadPermissionStatus();
+    _loadPermissionStatus().then((_) async {
+      // Auto-show App Hibernation dialog if pending
+      try {
+        if (mounted && Platform.isAndroid) {
+          final pending = await AppHibernationHelper.isPromptPending();
+          if (pending) {
+            await AppHibernationHelper.showAppHibernationDialog(context);
+            await AppHibernationHelper.clearPromptPending();
+            widget.onPermissionChanged?.call();
+          }
+        }
+      } catch (_) {}
+    });
   }
 
   Future<void> _loadPermissionStatus() async {
@@ -57,11 +70,20 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
     final batteryOptimized = await BatteryOptimizationHelper.isBatteryOptimizationBypassed();
     final batteryStatus = await BatteryOptimizationHelper.getBatteryOptimizationStatus();
     
+    // Check app hibernation status (Android 12+). Informational only.
+    final appHibernationStatus = await AppHibernationHelper.getAppHibernationStatus();
+    
+    // Has issues if battery optimization is not bypassed or permissions not granted.
+    // App hibernation is informational only and does not affect overall "hasIssues".
+    final hasPermissionIssues = permissions.values.any((status) => status != PermissionStatus.granted);
+    final hasIssues = !batteryOptimized || hasPermissionIssues;
+    
     return PermissionStatusInfo(
       permissions: permissions,
       batteryOptimized: batteryOptimized,
       batteryStatus: batteryStatus,
-      hasIssues: !batteryOptimized || permissions.values.any((status) => status != PermissionStatus.granted),
+      appHibernationStatus: appHibernationStatus,
+      hasIssues: hasIssues,
     );
   }
 
@@ -154,6 +176,12 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
               : 'Required for continuous tracking',
         ),
         
+        // App hibernation status (Android 12+) - informational (neutral, no status icon)
+        if (_statusInfo!.appHibernationStatus.isAvailable) ...[
+          const SizedBox(height: 8),
+          _buildAppHibernationItem(),
+        ],
+        
         // Notification permission status
         if (Platform.isAndroid) ...[
           const SizedBox(height: 8),
@@ -170,13 +198,57 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
     );
   }
 
+  /// Build app hibernation item without status icon (informational only)
+  Widget _buildAppHibernationItem() {
+    return InkWell(
+      onTap: () => _showAppHibernationDialog(),
+      child: Row(
+        children: [
+          Icon(
+            Icons.power_settings_new,
+            size: 20,
+            color: Colors.grey[600],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'App Hibernation',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  'Disable Unused Apps to ensure continuous tracking.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline, size: 18),
+            onPressed: () => _showAppHibernationDialog(),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: 'Learn more',
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPermissionItem({
     required IconData icon,
     required String title,
     required bool status,
     required String description,
+    VoidCallback? onTap,
   }) {
-    return Row(
+    final widget = Row(
       children: [
         Icon(
           icon,
@@ -208,8 +280,33 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
           size: 16,
           color: status ? Colors.green : Colors.orange,
         ),
+        if (onTap != null) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.info_outline, size: 18),
+            onPressed: onTap,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: 'Learn more',
+          ),
+        ],
       ],
     );
+
+    if (onTap != null) {
+      return InkWell(
+        onTap: onTap,
+        child: widget,
+      );
+    }
+    return widget;
+  }
+
+  void _showAppHibernationDialog() {
+    AppHibernationHelper.showAppHibernationDialog(context).then((_) {
+      _loadPermissionStatus();
+      widget.onPermissionChanged?.call();
+    });
   }
 
   Widget _buildActionButtons() {
@@ -289,6 +386,19 @@ class PermissionSetupDialog extends StatelessWidget {
             ),
             
             const SizedBox(height: 16),
+            
+            // App hibernation section (Android 12+)
+            if (statusInfo.appHibernationStatus.isAvailable) ...[
+              _buildPermissionSection(
+                context,
+                icon: Icons.power_settings_new,
+                title: 'App Hibernation',
+                description: 'Android can revoke permissions for unused apps. Tap to review and adjust the setting.',
+                isGranted: true, // neutral - treated as informational
+                onFix: () => _fixAppHibernation(context),
+              ),
+              const SizedBox(height: 16),
+            ],
             
             // Notification permission section
             if (Platform.isAndroid) ...[
@@ -383,18 +493,10 @@ class PermissionSetupDialog extends StatelessWidget {
 
   Future<void> _fixBatteryOptimization(BuildContext context) async {
     try {
-      final result = await BatteryOptimizationHelper.requestBatteryOptimizationBypass();
-      if (result.success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Battery optimization bypassed successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        onPermissionChanged?.call();
-      } else {
-        await BatteryOptimizationHelper.showBatteryOptimizationDialog(context);
-      }
+      // Show dialog that redirects to settings (no auto-request)
+      await BatteryOptimizationHelper.showBatteryOptimizationDialog(context);
+      // Callback will trigger parent widget to refresh permission status
+      onPermissionChanged?.call();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -434,9 +536,28 @@ class PermissionSetupDialog extends StatelessWidget {
     }
   }
 
+  Future<void> _fixAppHibernation(BuildContext context) async {
+    try {
+      await AppHibernationHelper.showAppHibernationDialog(context);
+      onPermissionChanged?.call();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _fixAllPermissions(BuildContext context) async {
     // Fix battery optimization
     await _fixBatteryOptimization(context);
+    
+    // Fix app hibernation (Android 12+)
+    if (statusInfo.appHibernationStatus.isAvailable && statusInfo.appHibernationStatus.requiresAttention) {
+      await _fixAppHibernation(context);
+    }
     
     // Fix notification permission
     if (Platform.isAndroid) {
@@ -450,12 +571,14 @@ class PermissionStatusInfo {
   final Map<Permission, PermissionStatus> permissions;
   final bool batteryOptimized;
   final BatteryOptimizationStatus batteryStatus;
+  final AppHibernationStatus appHibernationStatus;
   final bool hasIssues;
 
   PermissionStatusInfo({
     required this.permissions,
     required this.batteryOptimized,
     required this.batteryStatus,
+    required this.appHibernationStatus,
     required this.hasIssues,
   });
 }

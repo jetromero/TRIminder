@@ -27,6 +27,16 @@ class AppConfig {
     }
     return false;
   }
+
+  // App Information
+  static String get appVersion {
+    final version = dotenv.env['APP_VERSION'];
+    if (version == null) {
+      throw Exception('APP_VERSION not found in .env file');
+    }
+    return version;
+  }
+
   // App Configuration
   static const int maxLoginAttempts = 5;
   static const Duration loginCooldown = Duration(minutes: 15);

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:io';
 import '../auth/login_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../services/supabase_service.dart';
@@ -17,6 +18,9 @@ import '../../services/persistent_tracker_service.dart';
 import '../../services/first_time_setup_service.dart';
 import '../../services/database_service.dart';
 import '../../utils/simplified_logger.dart';
+import '../../widgets/app_scaffold.dart';
+import '../../utils/app_hibernation_helper.dart';
+import '../../utils/battery_optimization_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isNewUser;
@@ -66,6 +70,44 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _isNewUser = widget.isNewUser;
+    // Check for pending dialogs after screen loads (app hibernation first, then battery optimization)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndShowPendingDialogs();
+    });
+  }
+
+  /// Check and show pending dialogs (app hibernation first, then battery optimization)
+  /// This ensures new users see the important setup dialogs immediately after login
+  Future<void> _checkAndShowPendingDialogs() async {
+    try {
+      if (mounted && Platform.isAndroid) {
+        // Wait a bit for the screen to fully render
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        if (mounted) {
+          // Check app hibernation first (Android 12+)
+          final hibernationPending = await AppHibernationHelper.isPromptPending();
+          if (hibernationPending) {
+            // showAppHibernationDialog already clears the pending flag internally
+            await AppHibernationHelper.showAppHibernationDialog(context);
+            // Wait a bit before showing next dialog
+            await Future.delayed(const Duration(milliseconds: 300));
+          }
+          
+          if (mounted) {
+            // Then check battery optimization
+            final batteryPending = await BatteryOptimizationHelper.isPromptPending();
+            if (batteryPending) {
+              // showBatteryOptimizationDialog already clears the pending flag internally
+              await BatteryOptimizationHelper.showBatteryOptimizationDialog(context);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error showing pending dialogs: $e');
+      // Don't block the UI if dialog fails
+    }
   }
 
   @override
@@ -574,7 +616,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       drawer: _AppDrawer(
         onSelectTab: widget.onSelectTab,
         currentScreenIndex: widget.currentIndex,
@@ -613,7 +655,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
                 maxWidth: ResponsiveUtils.getMaxContentWidth(context),
               ),
               child: ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
+                  physics: const ClampingScrollPhysics(),
                 padding: ResponsiveUtils.getScreenPadding(context),
                 itemCount: _getDashboardWidgets().length,
                 separatorBuilder: (context, index) => SizedBox(
@@ -1081,6 +1123,7 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
   int _offset = 0;
   bool _hasMore = true;
   late TabController _tabController;
+  int _friendCount = -1; // -1 means not loaded, 0 means no friends, >0 means has friends
 
   @override
   void initState() {
@@ -1091,8 +1134,15 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
       final idx = _tabController.index;
       final nextScope = idx == 0 ? 'evsu' : idx == 1 ? 'department' : 'friends';
       if (_scope != nextScope) {
-        _scope = nextScope;
-        _fetchRankings(reset: true);
+        setState(() {
+          _scope = nextScope;
+          // Reset friend count when switching to friends tab to reload it
+          if (nextScope == 'friends') {
+            _friendCount = -1;
+          }
+        });
+        // Preserve current period when switching tabs
+        _fetchRankings(reset: true, forceCurrentPeriod: true);
       }
     });
     _loadMyDepartment();
@@ -1132,56 +1182,117 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
       final depId = _scope == 'department' ? _myDepartmentId : null;
       List<RankingEntry> page = [];
 
-      // Automatic period selection on reset (or when no period chosen) unless forcing current period
-      if ((reset || _entries.isEmpty) && !forceCurrentPeriod) {
-        final attemptOrder = ['daily', 'weekly', 'monthly'];
-        for (final p in attemptOrder) {
-          List<RankingEntry> tmp;
-          if (p == 'daily') {
-            tmp = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
-          } else if (p == 'weekly') {
-            tmp = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+      // Handle friends scope separately
+      if (_scope == 'friends') {
+        // Load friend count if not loaded yet
+        if (_friendCount == -1) {
+          try {
+            final friends = await svc.getFriends();
+            setState(() {
+              _friendCount = friends.length;
+            });
+          } catch (e) {
+            print('Error loading friend count: $e');
+            setState(() {
+              _friendCount = 0;
+            });
+          }
+        }
+
+        // Automatic period selection on reset (or when no period chosen) unless forcing current period
+        if ((reset || _entries.isEmpty) && !forceCurrentPeriod) {
+          final attemptOrder = ['daily', 'weekly', 'monthly'];
+          for (final p in attemptOrder) {
+            List<RankingEntry> tmp;
+            if (p == 'daily') {
+              tmp = await svc.getFriendsDailyRankings(limit: _limit, offset: 0, ascending: _ascending);
+            } else if (p == 'weekly') {
+              tmp = await svc.getFriendsWeeklyRankings(limit: _limit, offset: 0, ascending: _ascending);
+            } else {
+              tmp = await svc.getFriendsMonthlyRankings(limit: _limit, offset: 0, ascending: _ascending);
+            }
+            if (tmp.isNotEmpty) {
+              _period = p;
+              page = tmp;
+              _offset = tmp.length; // start after first page
+              break;
+            }
+          }
+          // If still empty (no data anywhere), keep period at daily
+          if (page.isEmpty) {
+            _period = 'daily';
+          }
+        } else if ((reset || _entries.isEmpty) && forceCurrentPeriod) {
+          // Respect user-selected current period when forced
+          if (_period == 'daily') {
+            page = await svc.getFriendsDailyRankings(limit: _limit, offset: 0, ascending: _ascending);
+          } else if (_period == 'weekly') {
+            page = await svc.getFriendsWeeklyRankings(limit: _limit, offset: 0, ascending: _ascending);
           } else {
-            tmp = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+            page = await svc.getFriendsMonthlyRankings(limit: _limit, offset: 0, ascending: _ascending);
           }
-          // Enforce department on client side just in case
-          if (_scope == 'department') {
-            tmp = tmp.where((e) => e.departmentId == _myDepartmentId).toList();
-          }
-          if (tmp.isNotEmpty) {
-            _period = p;
-            page = tmp;
-            _offset = tmp.length; // start after first page
-            break;
-          }
-        }
-        // If still empty (no data anywhere), keep period at daily
-        if (page.isEmpty) {
-          _period = 'daily';
-        }
-      } else if ((reset || _entries.isEmpty) && forceCurrentPeriod) {
-        // Respect user-selected current period when forced
-        if (_period == 'daily') {
-          page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0);
-        } else if (_period == 'weekly') {
-          page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0);
         } else {
-          page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0);
+          // Keep using the chosen period for pagination
+          if (_period == 'daily') {
+            page = await svc.getFriendsDailyRankings(limit: _limit, offset: _offset, ascending: _ascending);
+          } else if (_period == 'weekly') {
+            page = await svc.getFriendsWeeklyRankings(limit: _limit, offset: _offset, ascending: _ascending);
+          } else {
+            page = await svc.getFriendsMonthlyRankings(limit: _limit, offset: _offset, ascending: _ascending);
+          }
         }
       } else {
-        // Keep using the chosen period for pagination
-        if (_period == 'daily') {
-          page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
-        } else if (_period == 'weekly') {
-          page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+        // Automatic period selection on reset (or when no period chosen) unless forcing current period
+        if ((reset || _entries.isEmpty) && !forceCurrentPeriod) {
+          final attemptOrder = ['daily', 'weekly', 'monthly'];
+          for (final p in attemptOrder) {
+            List<RankingEntry> tmp;
+            if (p == 'daily') {
+              tmp = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+            } else if (p == 'weekly') {
+              tmp = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+            } else {
+              tmp = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0, ascending: _ascending);
+            }
+            // Enforce department on client side just in case
+            if (_scope == 'department') {
+              tmp = tmp.where((e) => e.departmentId == _myDepartmentId).toList();
+            }
+            if (tmp.isNotEmpty) {
+              _period = p;
+              page = tmp;
+              _offset = tmp.length; // start after first page
+              break;
+            }
+          }
+          // If still empty (no data anywhere), keep period at daily
+          if (page.isEmpty) {
+            _period = 'daily';
+          }
+        } else if ((reset || _entries.isEmpty) && forceCurrentPeriod) {
+          // Respect user-selected current period when forced
+          if (_period == 'daily') {
+            page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: 0);
+          } else if (_period == 'weekly') {
+            page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: 0);
+          } else {
+            page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: 0);
+          }
         } else {
-          page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+          // Keep using the chosen period for pagination
+          if (_period == 'daily') {
+            page = await svc.getDailyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+          } else if (_period == 'weekly') {
+            page = await svc.getWeeklyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+          } else {
+            page = await svc.getMonthlyRankings(departmentId: depId, limit: _limit, offset: _offset, ascending: _ascending);
+          }
         }
-      }
 
-      // Client-side filter to enforce department in all periods (weekly/monthly views may lack FK joins)
-      if (_scope == 'department') {
-        page = page.where((e) => e.departmentId == _myDepartmentId).toList();
+        // Client-side filter to enforce department in all periods (weekly/monthly views may lack FK joins)
+        if (_scope == 'department') {
+          page = page.where((e) => e.departmentId == _myDepartmentId).toList();
+        }
       }
 
       // Client-side sort by minutes to guarantee visual order regardless of backend
@@ -1204,7 +1315,7 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
         drawer: _AppDrawer(
           onSelectTab: widget.onSelectTab,
           currentScreenIndex: 1, // Rankings tab
@@ -1288,9 +1399,47 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
     );
     }
 
+    // Handle empty state for friends scope
+    if (_scope == 'friends' && !_loading && _entries.isEmpty) {
+      // Show different message based on whether user has friends or not
+      final hasFriends = _friendCount > 0;
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                hasFriends ? Icons.analytics_outlined : Icons.people_outline,
+                size: 64,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                hasFriends ? 'No rankings data' : 'No friends yet',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                hasFriends
+                    ? 'Your friends haven\'t tracked any screen time for this period yet.'
+                    : 'Add friends to see rankings!',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: () async { await _fetchRankings(reset: true); },
       child: ListView.builder(
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.all(16),
         itemCount: _entries.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
@@ -1447,7 +1596,7 @@ class FriendsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       drawer: _AppDrawer(
         onSelectTab: onSelectTab,
         currentScreenIndex: 100, // Friends tab
@@ -1456,7 +1605,7 @@ class FriendsTab extends StatelessWidget {
         title: const Text('Friends'),
       ),
       body: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
           _FriendsSearchCard(),
@@ -1895,7 +2044,7 @@ class _ProfileTabState extends State<ProfileTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return AppScaffold(
       drawer: _AppDrawer(
         onSelectTab: widget.onSelectTab,
         currentScreenIndex: 2, // Profile tab
@@ -1909,7 +2058,7 @@ class _ProfileTabState extends State<ProfileTab> {
           if (mounted) setState(() {});
         },
         child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
+          physics: const ClampingScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             if (_loading)
@@ -2078,7 +2227,11 @@ class _AppDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final drawerWidth = screenWidth * 0.75; // 75% of screen width
+    
     return Drawer(
+      width: drawerWidth,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
