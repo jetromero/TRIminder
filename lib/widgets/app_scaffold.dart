@@ -16,6 +16,8 @@ class AppScaffold extends StatelessWidget {
   final bool extendBody;
   final bool extendBodyBehindAppBar;
   final double? drawerWidth;
+  final double? drawerEdgeDragWidthOverride;
+  final bool? drawerGestureEnabled;
 
   const AppScaffold({
     super.key,
@@ -32,6 +34,8 @@ class AppScaffold extends StatelessWidget {
     this.extendBody = false,
     this.extendBodyBehindAppBar = false,
     this.drawerWidth,
+    this.drawerEdgeDragWidthOverride,
+    this.drawerGestureEnabled,
   });
 
   @override
@@ -39,14 +43,16 @@ class AppScaffold extends StatelessWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     
     // Configure drawer settings for optimal swipe gesture
-    final edgeDragWidth = screenWidth * 0.20; // 15% of screen width for edge detection
+    final defaultEdgeDragWidth = screenWidth * 1;
+    final edgeDragWidth = drawerEdgeDragWidthOverride ?? defaultEdgeDragWidth;
+    final enableDrawerGesture = drawerGestureEnabled ?? true;
 
     return Scaffold(
       appBar: appBar,
       body: body,
       drawer: drawer,
       drawerEdgeDragWidth: edgeDragWidth,
-      drawerEnableOpenDragGesture: true,
+      drawerEnableOpenDragGesture: enableDrawerGesture,
       floatingActionButton: floatingActionButton,
       floatingActionButtonLocation: floatingActionButtonLocation,
       bottomNavigationBar: bottomNavigationBar,

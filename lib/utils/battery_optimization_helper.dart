@@ -219,12 +219,12 @@ class BatteryOptimizationHelper {
           title: const Text('Battery Optimization'),
           content: const Text(
             'TRIminder needs battery optimization to be disabled for continuous tracking. '
-            'Would you like to open the settings now?',
+            'Would you like to disable it now?',
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('No'),
+              child: const Text('Later'),
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),

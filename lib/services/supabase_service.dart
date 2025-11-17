@@ -846,7 +846,7 @@ class SupabaseService {
     try {
       // Add timeout to prevent hanging
       await _client.from('profiles').select('id').limit(1)
-          .timeout(Duration(seconds: 3)); // 3-second timeout
+          .timeout(Duration(seconds: 1)); // 1-second timeout
       print('🔍 Supabase connection: ✅ Success');
       return true;
     } catch (e) {

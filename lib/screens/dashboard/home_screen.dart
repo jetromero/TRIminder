@@ -1320,6 +1320,8 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
           onSelectTab: widget.onSelectTab,
           currentScreenIndex: 1, // Rankings tab
         ),
+      drawerEdgeDragWidthOverride: MediaQuery.of(context).size.width * 0.2,
+      drawerGestureEnabled: true,
       appBar: AppBar(title: const Text('Rankings')),
       body: Column(
             children: [
