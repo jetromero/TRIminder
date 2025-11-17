@@ -8,6 +8,7 @@ TRIminder is a Flutter-based digital wellness application that automatically tra
 - **Automatic Screen Time Tracking**: 24/7 background monitoring without user intervention
 - **Inverse Gamification**: Earn XP for LESS screen time (digital wellness approach)
 - **Social Features**: Friend system, user tags, department and global rankings
+- **Self-Service Password Recovery**: OTP-based forgot-password flow handled entirely inside the app
 - **Offline-First Architecture**: Local SQLite database with cloud sync via Supabase
 - **Persistent Background Service**: Survives device restarts and app closures
 
@@ -152,6 +153,13 @@ TRIminder requires the following permissions for optimal functionality:
 2. **Duplicate entries**
    - App handles deduplication automatically
    - Contact support if issues persist
+
+### Account Access
+
+1. **Forgot password**
+   - Tap **Forgot Password?** on the login screen and enter your EVSU email.
+   - Enter the 6-digit OTP that is emailed to you (check spam folder too).
+   - After verification, set a new password directly in the app and log in again.
 
 ## Development
 

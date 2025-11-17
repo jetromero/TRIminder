@@ -14,6 +14,10 @@ class SupabaseService {
   // Rate limiting
   DateTime? _lastLoginAttempt;
   int _loginAttempts = 0;
+  DateTime? _lastPasswordResetAttempt;
+  int _passwordResetAttempts = 0;
+  static const int _maxPasswordResetAttempts = 3;
+  static const Duration _passwordResetCooldown = Duration(minutes: 2);
 
   // User tag rules: up to 15 letters followed by up to 4 digits
   static const int _userTagLettersMax = 15;
@@ -129,6 +133,46 @@ class SupabaseService {
   void _resetRateLimiting() {
     _loginAttempts = 0;
     _lastLoginAttempt = null;
+  }
+
+  bool _isPasswordResetRateLimited() {
+    if (_lastPasswordResetAttempt == null) return false;
+
+    final elapsed = DateTime.now().difference(_lastPasswordResetAttempt!);
+    if (elapsed >= _passwordResetCooldown) {
+      _passwordResetAttempts = 0;
+      return false;
+    }
+
+    return _passwordResetAttempts >= _maxPasswordResetAttempts;
+  }
+
+  Future<void> sendPasswordResetEmail(String email, {String? redirectUrl}) async {
+    if (!InputValidator.isValidEmail(email)) {
+      throw Exception('Please enter a valid EVSU email address.');
+    }
+
+    if (_isPasswordResetRateLimited()) {
+      throw Exception('Too many password reset requests. Please wait a moment before trying again.');
+    }
+
+    final sanitizedEmail = InputValidator.sanitizeInput(email.toLowerCase());
+
+    try {
+      _passwordResetAttempts++;
+      _lastPasswordResetAttempt = DateTime.now();
+
+      await _client.auth.resetPasswordForEmail(
+        sanitizedEmail,
+        redirectTo: redirectUrl,
+      );
+    } catch (e) {
+      // Roll back attempt counter so user can retry if request never reached Supabase
+      if (DateTime.now().difference(_lastPasswordResetAttempt!).inSeconds < 5) {
+        _passwordResetAttempts = (_passwordResetAttempts - 1).clamp(0, _maxPasswordResetAttempts);
+      }
+      rethrow;
+    }
   }
 
   // ... rest of the existing methods remain the same

@@ -38,6 +38,7 @@ class AuthErrorHandler {
           // Check for specific error messages
           final message = error.message.toLowerCase();
           
+          
           if (message.contains('invalid login credentials') || 
               message.contains('invalid email or password')) {
             return 'Incorrect email or password. Please try again.';
@@ -72,7 +73,13 @@ class AuthErrorHandler {
     
     // Handle other types of errors
     final errorString = error.toString().toLowerCase();
+
+    final containsInvalid = errorString.contains('incorrect or expired verification code');
     
+    if (containsInvalid) {
+      return 'Incorrect or expired verification code. Please try again.';
+    }
+
     if (errorString.contains('network') || errorString.contains('connection')) {
       return 'Network error. Please check your internet connection and try again.';
     }

@@ -1,7 +1,7 @@
 # EVSU Screentime Tracking App - Missing Features List
 
 ## Authentication & Account Management
-1. **Password Recovery System** - Implement forgot password functionality with secure email verification and reset token validation
+1. ~~**Password Recovery System** - Implement forgot password functionality with secure email verification and reset token validation~~ ✅ Completed with in-app OTP flow (email code → verify → new password)
 2. **Session Management & Logout** - Enable users to securely log out with automatic session timeout after inactivity period
 3. **Account Deletion** - Provide users with an option to permanently delete their account and associated screentime data
 
