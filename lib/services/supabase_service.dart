@@ -350,6 +350,142 @@ class SupabaseService {
     }
   }
 
+  /// Update user profile with specific fields (avatar, cover photo, bio)
+  Future<UserProfile?> updateUserProfileFields({
+    String? avatarUrl,
+    String? coverPhotoUrl,
+    String? bio,
+  }) async {
+    if (!isAuthenticated) return null;
+
+    try {
+      final userId = currentUserId;
+      if (userId == null) return null;
+
+      final updateData = <String, dynamic>{};
+      // Allow setting to null by passing empty string, or update if provided
+      if (avatarUrl != null) {
+        updateData['avatar_url'] = avatarUrl.isEmpty ? null : avatarUrl;
+      }
+      if (coverPhotoUrl != null) {
+        updateData['cover_photo_url'] = coverPhotoUrl.isEmpty ? null : coverPhotoUrl;
+      }
+      if (bio != null) {
+        // Validate bio length
+        if (bio.length > 500) {
+          throw Exception('Bio must be 500 characters or less');
+        }
+        updateData['bio'] = bio.isEmpty ? null : bio;
+      }
+
+      if (updateData.isEmpty) return null;
+
+      final response = await _client
+          .from('profiles')
+          .update(updateData)
+          .eq('id', userId)
+          .select()
+          .single()
+          .timeout(Duration(seconds: 5));
+
+      return UserProfile.fromJson(response);
+    } catch (e) {
+      final errorMsg = e.toString().toLowerCase();
+      if (errorMsg.contains('column') && errorMsg.contains('does not exist')) {
+        throw Exception(
+          'Database columns missing. Please run the migration: supabase_migrations/add_profile_fields.sql '
+          'in your Supabase SQL Editor to add avatar_url, cover_photo_url, and bio columns.'
+        );
+      }
+      print('Error updating user profile fields: $e');
+      rethrow;
+    }
+  }
+
+  /// Get user profile by ID (alias for getUserProfile for clarity)
+  Future<UserProfile?> getUserProfileById(String userId) async {
+    return getUserProfile(userId);
+  }
+
+  /// Get user badges with badge details
+  Future<List<Map<String, dynamic>>> getUserBadges(String userId) async {
+    try {
+      final response = await _client
+          .from('user_badges')
+          .select('''
+            badge_id,
+            awarded_at,
+            badges (
+              id,
+              name,
+              description,
+              icon_url,
+              xp_reward
+            )
+          ''')
+          .eq('user_id', userId)
+          .order('awarded_at', ascending: false);
+
+      final badges = <Map<String, dynamic>>[];
+      for (final item in response) {
+        final badgeData = item['badges'] as Map<String, dynamic>?;
+        if (badgeData != null) {
+          badges.add({
+            'badgeId': item['badge_id'],
+            'awardedAt': DateTime.parse(item['awarded_at']),
+            'badge': {
+              'id': badgeData['id'],
+              'name': badgeData['name'],
+              'description': badgeData['description'],
+              'iconUrl': badgeData['icon_url'],
+              'xpReward': badgeData['xp_reward'],
+            },
+          });
+        }
+      }
+
+      return badges;
+    } catch (e) {
+      print('Error fetching user badges: $e');
+      return [];
+    }
+  }
+
+  /// Get friendship status between current user and target user
+  /// Returns: 'none', 'friends', 'pending_in', 'pending_out', 'blocked', 'self'
+  Future<String> getFriendshipStatus(String targetUserId) async {
+    try {
+      final me = currentUserId;
+      if (me == null) return 'none';
+      if (me == targetUserId) return 'self';
+
+      final a = _leastId(me, targetUserId);
+      final b = _greatestId(me, targetUserId);
+
+      final response = await _client
+          .from('friendships')
+          .select('status, requester_id')
+          .eq('user_a_id', a)
+          .eq('user_b_id', b)
+          .maybeSingle();
+
+      if (response == null) return 'none';
+
+      final status = response['status'] as String?;
+      final requesterId = response['requester_id'] as String?;
+
+      if (status == 'accepted') return 'friends';
+      if (status == 'pending') {
+        return requesterId == me ? 'pending_out' : 'pending_in';
+      }
+      if (status == 'blocked') return 'blocked';
+      return 'none';
+    } catch (e) {
+      print('Error getting friendship status: $e');
+      return 'none';
+    }
+  }
+
   // ---------------------------
   // XP Award History methods
   // ---------------------------
@@ -709,6 +845,73 @@ class SupabaseService {
     }
   }
 
+  /// Unfriend a user (remove accepted friendship)
+  Future<bool> unfriend(String targetUserId) async {
+    try {
+      final me = currentUserId;
+      if (me == null) throw Exception('Not authenticated');
+      if (me == targetUserId) throw Exception('Cannot unfriend yourself');
+
+      final a = _leastId(me, targetUserId);
+      final b = _greatestId(me, targetUserId);
+
+      print('Unfriending: me=$me, target=$targetUserId, a=$a, b=$b');
+
+      // First check if friendship exists and get the ID
+      final existing = await _client
+          .from('friendships')
+          .select('id, status')
+          .eq('user_a_id', a)
+          .eq('user_b_id', b)
+          .maybeSingle();
+
+      if (existing == null) {
+        print('No friendship record found');
+        return false;
+      }
+
+      final friendshipId = existing['id'] as int?;
+      final status = existing['status'] as String?;
+      print('Found friendship with id=$friendshipId, status=$status');
+
+      if (status != 'accepted') {
+        print('Friendship status is not "accepted", it is: $status');
+        return false;
+      }
+
+      if (friendshipId == null) {
+        print('Friendship ID is null');
+        return false;
+      }
+
+      // Delete the friendship record using the ID (more reliable than composite key)
+      await _client
+          .from('friendships')
+          .delete()
+          .eq('id', friendshipId);
+      
+      // Verify deletion by checking if record still exists
+      final verify = await _client
+          .from('friendships')
+          .select('id')
+          .eq('user_a_id', a)
+          .eq('user_b_id', b)
+          .maybeSingle();
+      
+      if (verify != null) {
+        print('Warning: Friendship still exists after delete attempt');
+        return false;
+      }
+      
+      print('Successfully unfriended user: $targetUserId');
+      return true;
+    } catch (e, stackTrace) {
+      print('Error unfriending user: $e');
+      print('Stack trace: $stackTrace');
+      return false;
+    }
+  }
+
   /// List of accepted friends as UserProfile
   Future<List<UserProfile>> getFriends() async {
     try {
@@ -832,24 +1035,6 @@ class SupabaseService {
     }
   }
 
-  Future<List<UserBadge>> getUserBadges(String userId) async {
-    if (!isAuthenticated) return [];
-
-    try {
-      final response = await _client
-          .from('user_badges')
-          .select()
-          .eq('user_id', userId)
-          .order('earned_at', ascending: false);
-
-      return (response as List)
-          .map((json) => UserBadge.fromJson(json))
-          .toList();
-    } catch (e) {
-      print('Error fetching user badges: $e');
-      return [];
-    }
-  }
 
   Future<UserBadge?> insertUserBadge(UserBadge userBadge) async {
     if (!isAuthenticated) return null;
@@ -984,7 +1169,7 @@ class SupabaseService {
 
       final base = _client
           .from('user_usage_daily')
-          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .eq('usage_date', dateStr);
 
       if (departmentId != null) {
@@ -1004,6 +1189,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['total_minutes'] ?? 0) as int,
           period: 'daily',
         );
@@ -1024,7 +1210,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('weekly_user_avg')
-          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))');
+          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -1042,6 +1228,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
           period: 'weekly',
         );
@@ -1062,7 +1249,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('monthly_user_avg')
-          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))');
+          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -1080,6 +1267,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
           period: 'monthly',
         );
@@ -1138,7 +1326,7 @@ class SupabaseService {
 
       final base = _client
           .from('user_usage_daily')
-          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .eq('usage_date', dateStr)
           .inFilter('user_id', friendIds);
 
@@ -1155,6 +1343,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['total_minutes'] ?? 0) as int,
           period: 'daily',
         );
@@ -1179,7 +1368,7 @@ class SupabaseService {
 
       final base = _client
           .from('weekly_user_avg')
-          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .inFilter('user_id', friendIds);
 
       final rows = await base
@@ -1195,6 +1384,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
           period: 'weekly',
         );
@@ -1219,7 +1409,7 @@ class SupabaseService {
 
       final base = _client
           .from('monthly_user_avg')
-          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, departments!inner(name))')
+          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .inFilter('user_id', friendIds);
 
       final rows = await base
@@ -1235,6 +1425,7 @@ class SupabaseService {
           fullName: profile != null ? profile['full_name'] as String? : null,
           departmentId: profile != null ? profile['department_id'] as int? : null,
           departmentName: department != null ? department['name'] as String? : null,
+          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
           valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
           period: 'monthly',
         );

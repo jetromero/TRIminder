@@ -11,6 +11,9 @@ class UserProfile {
   final DateTime createdAt;
   final bool isSynced;
   final String? userTag; // Supabase: user_tag
+  final String? avatarUrl; // Supabase: avatar_url
+  final String? coverPhotoUrl; // Supabase: cover_photo_url
+  final String? bio; // Supabase: bio (max 500 chars)
 
   UserProfile({
     required this.id,
@@ -22,6 +25,9 @@ class UserProfile {
     required this.createdAt,
     this.isSynced = false,
     this.userTag,
+    this.avatarUrl,
+    this.coverPhotoUrl,
+    this.bio,
   });
 
   UserProfile copyWith({
@@ -34,6 +40,9 @@ class UserProfile {
     DateTime? createdAt,
     bool? isSynced,
     String? userTag,
+    String? avatarUrl,
+    String? coverPhotoUrl,
+    String? bio,
   }) {
     return UserProfile(
       id: id ?? this.id,
@@ -45,6 +54,9 @@ class UserProfile {
       createdAt: createdAt ?? this.createdAt,
       isSynced: isSynced ?? this.isSynced,
       userTag: userTag ?? this.userTag,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      coverPhotoUrl: coverPhotoUrl ?? this.coverPhotoUrl,
+      bio: bio ?? this.bio,
     );
   }
 
@@ -59,6 +71,9 @@ class UserProfile {
       'createdAt': createdAt.toIso8601String(),
       'isSynced': isSynced ? 1 : 0,
       'userTag': userTag,
+      'avatarUrl': avatarUrl,
+      'coverPhotoUrl': coverPhotoUrl,
+      'bio': bio,
     };
   }
 
@@ -73,6 +88,9 @@ class UserProfile {
       createdAt: DateTime.parse(map['createdAt']),
       isSynced: map['isSynced'] == 1,
       userTag: map['userTag'],
+      avatarUrl: map['avatarUrl'],
+      coverPhotoUrl: map['coverPhotoUrl'],
+      bio: map['bio'],
     );
   }
 
@@ -86,6 +104,9 @@ class UserProfile {
       'xp': xp,
       'created_at': createdAt.toIso8601String(),
       if (userTag != null) 'user_tag': userTag,
+      if (avatarUrl != null) 'avatar_url': avatarUrl,
+      if (coverPhotoUrl != null) 'cover_photo_url': coverPhotoUrl,
+      if (bio != null) 'bio': bio,
     };
   }
 
@@ -100,7 +121,19 @@ class UserProfile {
       createdAt: DateTime.parse(json['created_at']),
       isSynced: true,
       userTag: json['user_tag'],
+      avatarUrl: json['avatar_url'],
+      coverPhotoUrl: json['cover_photo_url'],
+      bio: json['bio'],
     );
+  }
+
+  // Validate bio length (max 500 characters)
+  static String? validateBio(String? bio) {
+    if (bio == null || bio.isEmpty) return null;
+    if (bio.length > 500) {
+      return 'Bio must be 500 characters or less';
+    }
+    return null;
   }
 
   // Add this method to UserProfile class
@@ -430,6 +463,7 @@ class RankingEntry {
   final String? fullName;
   final int? departmentId;
   final String? departmentName;
+  final String? avatarUrl; // Avatar URL from Supabase Storage
   final int valueMinutes; // daily total or averaged minutes depending on period
   final String period; // 'daily' | 'weekly' | 'monthly'
 
@@ -439,6 +473,7 @@ class RankingEntry {
     this.fullName,
     this.departmentId,
     this.departmentName,
+    this.avatarUrl,
     required this.valueMinutes,
     required this.period,
   });
@@ -450,6 +485,7 @@ class RankingEntry {
       fullName: map['full_name'] ?? map['fullName'],
       departmentId: map['department_id'] ?? map['departmentId'],
       departmentName: map['department_name'] ?? map['departmentName'],
+      avatarUrl: map['avatar_url'] ?? map['avatarUrl'],
       valueMinutes: (map['total_minutes'] ?? map['avg_minutes'] ?? map['avg_minutes_7d'] ?? map['avg_minutes_30d'] ?? 0) as int,
       period: period,
     );
@@ -462,6 +498,7 @@ class RankingEntry {
       'full_name': fullName,
       'department_id': departmentId,
       'department_name': departmentName,
+      'avatar_url': avatarUrl,
       'value_minutes': valueMinutes,
       'period': period,
     };

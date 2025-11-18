@@ -21,6 +21,8 @@ import '../../utils/simplified_logger.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../utils/app_hibernation_helper.dart';
 import '../../utils/battery_optimization_helper.dart';
+import '../../widgets/profile/avatar_widget.dart';
+import '../profile/student_profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isNewUser;
@@ -45,7 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
     RankingsTab(
       onSelectTab: _handleSelectTab,
     ),
-    ProfileTab(
+    ChallengesTab(
       onSelectTab: _handleSelectTab,
     ),
   ];
@@ -137,8 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Rankings',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person),
-            label: 'Profile',
+            icon: Icon(Icons.emoji_events),
+            label: 'Challenges',
           ),
         ],
       ),
@@ -1001,10 +1003,6 @@ class _XPProgressCardState extends State<XPProgressCard> {
                       style: TextStyle(fontSize: 14 * fontScale),
                     ),
                     const Spacer(),
-                    Text(
-                      'Level ${currentLevel + 1}',
-                      style: TextStyle(fontSize: 14 * fontScale),
-                    ),
                   ],
                 ),
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
@@ -1162,6 +1160,24 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
       final profile = await SupabaseService().getUserProfile(userId);
       setState(() { _myDepartmentId = profile?.departmentId; });
     } catch (_) {}
+  }
+
+  /// Calculate rank with ties handling
+  /// If multiple users have the same valueMinutes, they get the same rank
+  /// Example: [100, 100, 90, 90, 80] -> ranks: [1, 1, 3, 3, 5]
+  int _calculateRank(int index) {
+    if (index == 0) return 1;
+    
+    // Find the first entry with a different value
+    final currentValue = _entries[index].valueMinutes;
+    for (int i = index - 1; i >= 0; i--) {
+      if (_entries[i].valueMinutes != currentValue) {
+        // Found first different value, rank is i + 2 (since i is 0-indexed)
+        return i + 2;
+      }
+    }
+    // All previous entries have the same value, so rank is 1
+    return 1;
   }
 
   Future<void> _fetchRankings({bool reset = false, bool forceCurrentPeriod = false}) async {
@@ -1322,7 +1338,9 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
         ),
       drawerEdgeDragWidthOverride: MediaQuery.of(context).size.width * 0.2,
       drawerGestureEnabled: true,
-      appBar: AppBar(title: const Text('Rankings')),
+      appBar: AppBar(
+        title: const Text('Rankings'),
+      ),
       body: Column(
             children: [
           // Centered, swipable tabs: EVSU | Department | Friends
@@ -1453,12 +1471,12 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
             );
           }
           final entry = _entries[index];
+          // Calculate rank with ties handling
+          int rank = _calculateRank(index);
           return _RankingTile(
-            rank: index + 1,
-            name: entry.fullName ?? entry.userTag ?? 'Unknown',
+            rank: rank,
+            entry: entry,
             you: entry.userId == SupabaseService().currentUserId,
-            minutes: entry.valueMinutes,
-            department: entry.departmentName,
           );
         },
       ),
@@ -1531,62 +1549,155 @@ class _SortToggleButton extends StatelessWidget {
 
 class _RankingTile extends StatelessWidget {
   final int rank;
-  final String name;
+  final RankingEntry entry;
   final bool you;
-  final int minutes;
-  final String? department;
+
   const _RankingTile({
     required this.rank,
-    required this.name,
+    required this.entry,
     required this.you,
-    required this.minutes,
-    this.department,
   });
+
+  /// Format rank number (#1, #2, #3, etc.)
+  String _formatRank(int rank) {
+    return '#$rank';
+  }
+
+  /// Get rank badge color (gold for 1st, silver for 2nd, bronze for 3rd, default for others)
+  Color _getRankColor(BuildContext context, int rank) {
+    if (rank == 1) return const Color(0xFFFFD700); // Gold
+    if (rank == 2) return const Color(0xFFC0C0C0); // Silver
+    if (rank == 3) return const Color(0xFFCD7F32); // Bronze
+    return Theme.of(context).colorScheme.primaryContainer;
+  }
+
+  /// Get rank text color (dark for top 3, theme color for others)
+  Color _getRankTextColor(BuildContext context, int rank) {
+    if (rank <= 3) return Colors.black87;
+    return Theme.of(context).colorScheme.onPrimaryContainer;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final hours = minutes ~/ 60;
-    final mins = minutes % 60;
+    final hours = entry.valueMinutes ~/ 60;
+    final mins = entry.valueMinutes % 60;
     final timeStr = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+    final name = entry.fullName ?? entry.userTag ?? 'Unknown';
 
-              return Card(
+    return Card(
       margin: const EdgeInsets.only(bottom: 12),
-                child: Padding(
-        padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-            CircleAvatar(radius: 18, child: Text('$rank')),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                  Row(children: [
-                    Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold))),
-                    if (you) Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => StudentProfileScreen(userId: entry.userId),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              // Avatar with rank badge overlay
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AvatarWidget.small(
+                    avatarUrl: entry.avatarUrl,
+                    fullName: name,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => StudentProfileScreen(userId: entry.userId),
+                        ),
+                      );
+                    },
+                  ),
+                  // Rank badge positioned in upper left corner
+                  Positioned(
+                    left: -4,
+                    top: -4,
+                    child: Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: _getRankColor(context, rank),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.surface,
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      child: const Text('You', style: TextStyle(fontSize: 12)),
-                    ),
-                  ]),
-                  const SizedBox(height: 2),
-                  Text(department ?? '—', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                          ],
+                      child: Center(
+                        child: Text(
+                          _formatRank(rank),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: rank <= 3 ? 12 : 10,
+                            color: _getRankTextColor(context, rank),
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                Text(timeStr, style: const TextStyle(fontWeight: FontWeight.bold)),
-                const Text('screen time', style: TextStyle(fontSize: 12)),
-                        ],
-            )
-                    ],
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              // Name and info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (you)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text('You', style: TextStyle(fontSize: 12)),
+                        ),
+                    ]),
+                    const SizedBox(height: 2),
+                    Text(
+                      entry.departmentName ?? '—',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Screen time
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(timeStr, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const Text('screen time', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1778,21 +1889,38 @@ class _FriendsListCard extends StatefulWidget {
   State<_FriendsListCard> createState() => _FriendsListCardState();
 }
 
-class _FriendsListCardState extends State<_FriendsListCard> {
+class _FriendsListCardState extends State<_FriendsListCard> with WidgetsBindingObserver {
   bool _loading = true;
   List<UserProfile> _friends = const [];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Refresh when app resumes
+      _load();
+    }
   }
 
   Future<void> _load() async {
     setState(() { _loading = true; });
     try {
       final data = await SupabaseService().getFriends();
-      setState(() { _friends = data; });
+      if (mounted) {
+        setState(() { _friends = data; });
+      }
     } finally {
       if (mounted) setState(() { _loading = false; });
     }
@@ -1830,9 +1958,24 @@ class _FriendsListCardState extends State<_FriendsListCard> {
                 itemBuilder: (context, i) {
                   final p = _friends[i];
                   return ListTile(
-                    leading: const CircleAvatar(child: Icon(Icons.person)),
+                    leading: AvatarWidget.small(
+                      avatarUrl: p.avatarUrl,
+                      fullName: p.fullName,
+                    ),
                     title: Text(p.fullName),
                     subtitle: Text('@${p.userTag ?? 'no-tag'}'),
+                    onTap: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => StudentProfileScreen(userId: p.id),
+                        ),
+                      );
+                      // Refresh friends list when returning from profile
+                      if (mounted) {
+                        _load();
+                      }
+                    },
                   );
                 },
               ),
@@ -1982,206 +2125,174 @@ class _FriendRequestsCardState extends State<_FriendRequestsCard> {
   }
 }
 
-class ProfileTab extends StatefulWidget {
+class ChallengesTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
-  const ProfileTab({super.key, required this.onSelectTab});
+  const ChallengesTab({super.key, required this.onSelectTab});
 
   @override
-  State<ProfileTab> createState() => _ProfileTabState();
+  State<ChallengesTab> createState() => _ChallengesTabState();
 }
 
-class _ProfileTabState extends State<ProfileTab> {
-  UserProfile? _profile;
-  String? _deptName;
-  bool _loading = true;
-  final _tagController = TextEditingController();
-  String? _availabilityMsg;
-  bool _checking = false;
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _tagController.dispose();
-    super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadProfile();
-  }
-
-  Future<void> _loadProfile() async {
-    try {
-      final userId = SupabaseService().currentUserId;
-      if (userId == null) {
-        setState(() { _loading = false; });
-        return;
-      }
-
-      UserProfile? profile;
-      // Try Supabase first
-      try { profile = await SupabaseService().getUserProfile(userId); } catch (_) {}
-      // Fallback to local DB
-      profile ??= await DatabaseService().getUserProfile(userId);
-
-      String? deptName;
-      if (profile?.departmentId != null) {
-        // Try cache first
-        deptName = await DatabaseService().getDepartmentName(profile!.departmentId!);
-        // Try cloud and cache
-        deptName ??= await SupabaseService().getDepartmentNameById(profile.departmentId!);
-      }
-
-      setState(() {
-        _profile = profile;
-        _deptName = deptName;
-        _tagController.text = profile?.userTag ?? '';
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() { _loading = false; });
-    }
-  }
-
+class _ChallengesTabState extends State<ChallengesTab> {
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
       drawer: _AppDrawer(
         onSelectTab: widget.onSelectTab,
-        currentScreenIndex: 2, // Profile tab
+        currentScreenIndex: 2, // Challenges tab
       ),
       appBar: AppBar(
-        title: const Text('Profile'),
+        title: const Text('Challenges'),
       ),
-      body: RefreshIndicator(
-        onRefresh: () async {
-          await _loadProfile();
-          if (mounted) setState(() {});
-        },
-        child: ListView(
-          physics: const ClampingScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.only(top: 40),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_profile == null)
-              const Padding(
-                padding: EdgeInsets.only(top: 40),
-                child: Center(child: Text('No profile found')),
-              )
-            else ...[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Profile', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 12),
-                      _kv('Full name', _profile!.fullName),
-                      _kv('Email', _profile!.email),
-                      _kv('Role', _profile!.role),
-                      _kv('Department', _deptName ?? (_profile!.departmentId?.toString() ?? '—')),
-                      _kv('User tag', _profile!.userTag ?? '—'),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            // Header section
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20.0),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Icon(
+                      Icons.emoji_events,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 16),
                     Text(
-                      'User Tag',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      'Complete Challenges',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '1–15 letters + up to 4 digits. Case-insensitive unique.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _tagController,
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        hintText: 'Enter your tag (e.g., Alice7)',
-                        suffixIcon: _checking ? const Padding(
-                          padding: EdgeInsets.all(10),
-                          child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                        ) : (_availabilityMsg == null
-                          ? null
-                          : Icon(
-                              _availabilityMsg!.startsWith('Available') ? Icons.check_circle : Icons.error,
-                              color: _availabilityMsg!.startsWith('Available') ? Colors.green : Colors.red,
-                            )),
+                      'Earn badges, profile borders, and cover photo borders by completing daily and weekly challenges.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey[600],
                       ),
-                      onChanged: (value) async {
-                        setState(() {
-                          _availabilityMsg = null;
-                          _checking = true;
-                        });
-                        await Future.delayed(const Duration(milliseconds: 350));
-                        final svc = SupabaseService();
-                        if (!svc.isValidUserTag(value)) {
-                          setState(() {
-                            _availabilityMsg = 'Invalid format';
-                            _checking = false;
-                          });
-                          return;
-                        }
-                        final ok = await svc.isUserTagAvailable(value);
-                        setState(() {
-                          _availabilityMsg = ok ? 'Available' : 'Already taken';
-                          _checking = false;
-                        });
-                      },
+                      textAlign: TextAlign.center,
                     ),
-                    if (_availabilityMsg != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _availabilityMsg!,
-                        style: TextStyle(
-                          color: _availabilityMsg!.startsWith('Available') ? Colors.green : Colors.red,
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            // Coming soon section
+            Text(
+              'Coming Soon',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.workspace_premium,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Badge Challenges',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Unlock special badges by completing challenges',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.border_color,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Profile Border Challenges',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Earn decorative borders for your profile picture',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        onPressed: _saving ? null : () async {
-                          final tag = _tagController.text.trim();
-                          final svc = SupabaseService();
-                          if (!svc.isValidUserTag(tag)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Invalid tag format')),
-                            );
-                            return;
-                          }
-                          setState(() { _saving = true; });
-                          final ok = await svc.updateCurrentUserTag(tag);
-                          setState(() { _saving = false; });
-                          if (!mounted) return;
-                          if (ok) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('User tag updated')),
-                            );
-                          } else {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Could not update user tag')),
-                            );
-                          }
-                        },
-                        icon: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save),
-                        label: const Text('Save Tag'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.image,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Cover Photo Border Challenges',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Unlock special borders for your cover photo',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -2195,26 +2306,53 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 }
 
-Widget _kv(String label, String value) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-          ),
-        ),
-      ],
-    ),
-  );
+/// Load current user profile for drawer header
+/// Works offline by checking connectivity first and falling back to local DB
+Future<UserProfile?> _loadCurrentUserProfile() async {
+  try {
+    final userId = SupabaseService().currentUserId;
+    if (userId == null) return null;
+    
+    final supabaseService = SupabaseService();
+    final db = DatabaseService();
+    
+    // Check connectivity first
+    final isConnected = await supabaseService.isConnected();
+    
+    // Try Supabase first if online
+    if (isConnected) {
+      try {
+        final profile = await supabaseService.getUserProfile(userId);
+        if (profile != null) {
+          // Cache profile locally for offline access
+          await db.insertUserProfile(profile);
+          return profile;
+        }
+      } catch (e) {
+        print('Supabase profile fetch failed, trying local: $e');
+      }
+    }
+    
+    // Fallback to local DB (offline mode or Supabase failed)
+    final localProfile = await db.getUserProfile(userId);
+    if (localProfile != null) {
+      return localProfile;
+    }
+    
+    return null;
+  } catch (e) {
+    print('Error loading current user profile: $e');
+    // Last resort: try local DB even if there was an error
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId != null) {
+        return await DatabaseService().getUserProfile(userId);
+      }
+    } catch (_) {
+      // Ignore errors in fallback
+    }
+    return null;
+  }
 }
 
 /// App-wide navigation drawer used across tabs
@@ -2238,21 +2376,8 @@ class _AppDrawer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DrawerHeader(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-              ),
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  'TRIminder',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ),
-            ),
+            // Profile header section
+            _buildProfileHeader(context),
             _buildNavItem(
               context: context,
               icon: Icons.dashboard,
@@ -2285,18 +2410,8 @@ class _AppDrawer extends StatelessWidget {
             ),
             _buildNavItem(
               context: context,
-              icon: Icons.person,
-              title: 'Profile',
-              index: 2,
-              onTap: () {
-                Navigator.of(context).pop();
-                onSelectTab(2);
-              },
-            ),
-            _buildNavItem(
-              context: context,
               icon: Icons.settings,
-              title: 'Settings',
+              title: 'Account Settings',
               index: 200,
               onTap: () {
                 Navigator.of(context).pop();
@@ -2371,6 +2486,139 @@ class _AppDrawer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Build profile header at top of drawer
+  Widget _buildProfileHeader(BuildContext context) {
+    return FutureBuilder<UserProfile?>(
+      future: _loadCurrentUserProfile(),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        
+        // Calculate XP progress
+        int? level;
+        double? progress;
+        Map<String, int>? levelProgress;
+        
+        if (profile != null) {
+          level = profile.level;
+          progress = profile.progressToNextLevel;
+          levelProgress = profile.currentLevelProgress;
+        }
+        
+        final currentLevel = level ?? 1;
+        final currentProgress = (progress ?? 0.0).clamp(0.0, 1.0);
+        final xpInCurrentLevel = levelProgress?['currentLevelXP'] ?? 0;
+        final xpNeededForNextLevel = levelProgress?['requiredForNextLevel'] ?? 100;
+        
+        return InkWell(
+          onTap: () {
+            Navigator.of(context).pop();
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const StudentProfileScreen(),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+              border: Border(
+                bottom: BorderSide(
+                  color: Theme.of(context).dividerColor,
+                  width: 1,
+                ),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    AvatarWidget.medium(
+                      avatarUrl: profile?.avatarUrl,
+                      fullName: profile?.fullName,
+                      size: 56.0,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            profile?.fullName ?? 'Loading...',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (profile?.userTag != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '@${profile!.userTag}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // XP Progress Bar
+                Row(
+                  children: [
+                    Icon(
+                      Icons.star,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Level $currentLevel',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: currentProgress,
+                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  minHeight: 6,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

@@ -69,6 +69,10 @@ dependencies:
   
   # For device information and manufacturer detection
   device_info_plus: ^10.1.0
+  
+  # For image picking and processing
+  image_picker: ^1.0.0
+  image: ^4.0.0
 
 dev_dependencies:
   flutter_test:

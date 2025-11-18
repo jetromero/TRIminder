@@ -142,9 +142,22 @@ class DatabaseService {
   Future<void> _applyMigrations(Database db) async {
     try {
       final columns = await db.rawQuery('PRAGMA table_info(user_profiles)');
-      final hasUserTag = columns.any((c) => (c['name'] as String?) == 'userTag');
-      if (!hasUserTag) {
+      final columnNames = columns.map((c) => (c['name'] as String?)).toSet();
+      
+      if (!columnNames.contains('userTag')) {
         await db.execute('ALTER TABLE user_profiles ADD COLUMN userTag TEXT');
+      }
+      
+      if (!columnNames.contains('avatarUrl')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN avatarUrl TEXT');
+      }
+      
+      if (!columnNames.contains('coverPhotoUrl')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN coverPhotoUrl TEXT');
+      }
+      
+      if (!columnNames.contains('bio')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN bio TEXT');
       }
 
       // Ensure departments table exists
@@ -402,8 +415,47 @@ class DatabaseService {
     );
 
     return List.generate(maps.length, (i) {
-      return UserBadge.fromMap(maps[i]);
+      final map = maps[i];
+      // Convert badgeId from TEXT to int
+      final badgeId = int.tryParse(map['badgeId']?.toString() ?? '0') ?? 0;
+      return UserBadge(
+        userId: map['userId']?.toString() ?? '',
+        badgeId: badgeId,
+        awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        isSynced: (map['isSynced'] as int? ?? 0) == 1,
+      );
     });
+  }
+
+  /// Get badge details by badgeId from local database
+  Future<Badge?> getBadgeById(String badgeId) async {
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'badges',
+        where: 'id = ?',
+        whereArgs: [badgeId],
+        limit: 1,
+      );
+
+      if (maps.isNotEmpty) {
+        final map = maps.first;
+        // Map local database fields to Badge model
+        // Local DB has: id, name, description, iconPath, type, requiredValue, createdAt
+        // Badge model expects: id, name, description, iconUrl, xpReward
+        return Badge(
+          id: int.tryParse(map['id']?.toString() ?? '0') ?? 0,
+          name: map['name']?.toString() ?? 'Unknown Badge',
+          description: map['description']?.toString(),
+          iconUrl: map['iconPath']?.toString(), // Map iconPath to iconUrl
+          xpReward: map['requiredValue'] as int? ?? 0, // Use requiredValue as xpReward
+        );
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching badge by ID: $e');
+      return null;
+    }
   }
 
   Future<int> insertUserBadge(UserBadge userBadge) async {

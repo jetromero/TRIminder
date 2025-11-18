@@ -278,6 +278,12 @@ class ImprovedSyncService extends ChangeNotifier {
           print('   - Full Name: ${userProfile.fullName}');
           print('   - XP: ${userProfile.xp}');
           print('   - Email: ${userProfile.email}');
+          if (userProfile.avatarUrl != null) {
+            print('   - Avatar: ${userProfile.avatarUrl}');
+          }
+          if (userProfile.coverPhotoUrl != null) {
+            print('   - Cover Photo: ${userProfile.coverPhotoUrl}');
+          }
         } else {
           print('⚠️ No user profile found in Supabase');
         }
@@ -343,6 +349,20 @@ class ImprovedSyncService extends ChangeNotifier {
       if (!xpSyncSuccess) {
         print('⚠️ XP sync failed, but continuing with other sync operations');
       }
+
+      // 4) Update user profile (for avatar, cover photo, bio changes)
+      print('👤 Updating user profile from Supabase...');
+      try {
+        final userProfile = await supabaseService.getUserProfile(userId);
+        if (userProfile != null) {
+          await db.insertUserProfile(userProfile); // Uses replace, so updates existing
+          print('✅ User profile updated locally');
+        }
+      } catch (e) {
+        print('⚠️ Profile update failed: $e');
+        // Don't fail the entire sync for profile update errors
+      }
+
       return success;
     } catch (e) {
       print('❌ Error in incremental sync: $e');
