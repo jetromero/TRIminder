@@ -160,11 +160,32 @@ class AutomaticScreenTracker extends ChangeNotifier {
       final userId = SupabaseService().currentUserId;
       if (userId == null) return;
 
+      final db = DatabaseService();
+      
+      // Check if XP was already awarded for this date (duplicate prevention)
+      final existingHistory = await db.getXPAwardHistoryForDate(userId, date);
+      if (existingHistory != null) {
+        SimplifiedLogger.xp('XP already awarded for ${date.toString().split(' ')[0]}, skipping duplicate award');
+        _lastXPAwardDate = date;
+        return;
+      }
+
+      // Also check Supabase if online (for cross-device duplicate prevention)
+      final supabaseService = SupabaseService();
+      final isOnline = await supabaseService.isConnected();
+      if (isOnline) {
+        final alreadyAwarded = await supabaseService.checkXPAwardedForDate(userId, date);
+        if (alreadyAwarded) {
+          SimplifiedLogger.xp('XP already awarded in Supabase for ${date.toString().split(' ')[0]}, skipping duplicate award');
+          _lastXPAwardDate = date;
+          return;
+        }
+      }
+
       // Get screen time for the specific date
       final startOfDay = DateTime(date.year, date.month, date.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
       
-      final db = DatabaseService();
       final dayLogs = await db.getScreenTimeEntriesForDateRange(
         userId, 
         startOfDay, 
@@ -180,8 +201,8 @@ class AutomaticScreenTracker extends ChangeNotifier {
         final finalXP = _calculateDailyXP(dayScreenTimeMinutes);
         
         if (finalXP > 0) {
-          // Award the XP to user profile
-          await _updateUserDailyXP(finalXP);
+          // Award the XP to user profile and record history
+          await _updateUserDailyXP(finalXP, dayScreenTimeMinutes, date);
           _lastXPAwardDate = date;
           
           SimplifiedLogger.xp('End-of-day XP awarded: $finalXP XP for ${dayScreenTimeMinutes}m screen time');
@@ -245,7 +266,8 @@ class AutomaticScreenTracker extends ChangeNotifier {
   }
 
   /// Update user's daily XP in profile (only called at end of day)
-  Future<void> _updateUserDailyXP(int xpToAward) async {
+  /// Also records XP award history for duplicate prevention
+  Future<void> _updateUserDailyXP(int xpToAward, int screenTimeMinutes, DateTime awardDate) async {
     try {
       final userId = SupabaseService().currentUserId;
       if (userId == null) {
@@ -257,6 +279,19 @@ class AutomaticScreenTracker extends ChangeNotifier {
         SimplifiedLogger.error('Cannot update XP: Invalid XP amount ($xpToAward)');
         return;
       }
+
+      final db = DatabaseService();
+      
+      // Create XP award history record
+      final history = XPAwardHistory(
+        id: DateTime.now().microsecondsSinceEpoch,
+        userId: userId,
+        awardDate: awardDate,
+        xpAwarded: xpToAward,
+        screenTimeMinutes: screenTimeMinutes,
+        createdAt: DateTime.now(),
+        isSynced: false,
+      );
 
       // Check if we're online
       final supabaseService = SupabaseService();
@@ -275,14 +310,33 @@ class AutomaticScreenTracker extends ChangeNotifier {
             xp: userProfile.xp + xpToAward,
           );
           
-          // Update Supabase
+          // Update Supabase profile
           final supabaseSuccess = await supabaseService.updateUserProfile(updatedProfile);
+          
+          // Insert XP award history to Supabase
+          XPAwardHistory? supabaseHistory;
+          if (supabaseSuccess != null) {
+            try {
+              supabaseHistory = await supabaseService.insertXPAwardHistory(history);
+            } catch (historyError) {
+              SimplifiedLogger.warning('Failed to insert XP award history to Supabase: $historyError');
+            }
+          }
           
           // Also update local database to keep them in sync
           if (supabaseSuccess != null) {
             try {
-              final db = DatabaseService();
               await db.updateUserProfile(updatedProfile);
+              
+              // Insert or update local history
+              if (supabaseHistory != null) {
+                // Update with Supabase ID if available and mark as synced
+                final updatedHistory = history.copyWith(id: supabaseHistory.id, isSynced: true);
+                await db.insertXPAwardHistory(updatedHistory);
+              } else {
+                await db.insertXPAwardHistory(history);
+              }
+              
               SimplifiedLogger.xp('User XP updated online: +$xpToAward (Total: ${updatedProfile.xp})');
             } catch (localError) {
               SimplifiedLogger.warning('Supabase updated but local DB failed: $localError');
@@ -291,16 +345,16 @@ class AutomaticScreenTracker extends ChangeNotifier {
           } else {
             SimplifiedLogger.warning('Failed to update XP in Supabase, storing locally for later sync');
             // Fallback to offline storage if Supabase fails
-            await _storeXPUpdateLocally(userId, xpToAward);
+            await _storeXPUpdateLocally(userId, xpToAward, screenTimeMinutes, awardDate);
           }
         } catch (onlineError) {
           SimplifiedLogger.error('Online XP update failed: $onlineError');
           // Fallback to offline storage
-          await _storeXPUpdateLocally(userId, xpToAward);
+          await _storeXPUpdateLocally(userId, xpToAward, screenTimeMinutes, awardDate);
         }
       } else {
         // Offline: Store locally for later sync
-        await _storeXPUpdateLocally(userId, xpToAward);
+        await _storeXPUpdateLocally(userId, xpToAward, screenTimeMinutes, awardDate);
       }
     } catch (e) {
       SimplifiedLogger.error('Critical error updating user XP: $e');
@@ -308,7 +362,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
       try {
         final userId = SupabaseService().currentUserId;
         if (userId != null) {
-          await _storeXPUpdateLocally(userId, xpToAward);
+          await _storeXPUpdateLocally(userId, xpToAward, screenTimeMinutes, awardDate);
         }
       } catch (fallbackError) {
         SimplifiedLogger.error('Even fallback XP storage failed: $fallbackError');
@@ -316,20 +370,36 @@ class AutomaticScreenTracker extends ChangeNotifier {
     }
   }
 
-  /// Helper method to store XP update locally
-  Future<void> _storeXPUpdateLocally(String userId, int xpToAward) async {
+  /// Helper method to store XP update locally (both XP update log and history)
+  Future<void> _storeXPUpdateLocally(String userId, int xpToAward, int screenTimeMinutes, DateTime awardDate) async {
     try {
       final db = DatabaseService();
+      
+      // Store XP update log for sync
       final xpUpdate = XPUpdateLog(
         id: DateTime.now().microsecondsSinceEpoch,
         userId: userId,
         xpToAdd: xpToAward,
-        date: DateTime.now(),
+        date: awardDate,
         createdAt: DateTime.now(),
         isSynced: false,
       );
       
       await db.insertXPUpdateLog(xpUpdate);
+      
+      // Store XP award history for duplicate prevention
+      final history = XPAwardHistory(
+        id: DateTime.now().microsecondsSinceEpoch,
+        userId: userId,
+        awardDate: awardDate,
+        xpAwarded: xpToAward,
+        screenTimeMinutes: screenTimeMinutes,
+        createdAt: DateTime.now(),
+        isSynced: false,
+      );
+      
+      await db.insertXPAwardHistory(history);
+      
       SimplifiedLogger.xp('XP update stored locally for sync: +$xpToAward');
     } catch (e) {
       SimplifiedLogger.error('Failed to store XP update locally: $e');

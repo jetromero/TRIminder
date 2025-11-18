@@ -116,10 +116,26 @@ class DatabaseService {
       )
     ''');
 
+    // XP Award History table
+    await db.execute('''
+      CREATE TABLE xp_award_history (
+        id INTEGER PRIMARY KEY,
+        userId TEXT NOT NULL,
+        awardDate TEXT NOT NULL,
+        xpAwarded INTEGER NOT NULL,
+        screenTimeMinutes INTEGER NOT NULL,
+        createdAt TEXT NOT NULL,
+        isSynced INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (userId) REFERENCES user_profiles (id)
+      )
+    ''');
+
     // Add performance indexes
     await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
     await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
     await db.execute('CREATE INDEX idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
+    await db.execute('CREATE INDEX idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
+    await db.execute('CREATE INDEX idx_xp_award_history_synced ON xp_award_history(isSynced)');
   }
 
   /// Apply lightweight migrations on open
@@ -144,6 +160,27 @@ class DatabaseService {
         'CREATE UNIQUE INDEX IF NOT EXISTS idx_screen_time_user_start_unique '
         'ON screen_time_entries(userId, startTime)'
       );
+      
+      // Migrate xp_award_history table if it doesn't exist
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='xp_award_history'"
+      );
+      if (tables.isEmpty) {
+        await db.execute('''
+          CREATE TABLE xp_award_history (
+            id INTEGER PRIMARY KEY,
+            userId TEXT NOT NULL,
+            awardDate TEXT NOT NULL,
+            xpAwarded INTEGER NOT NULL,
+            screenTimeMinutes INTEGER NOT NULL,
+            createdAt TEXT NOT NULL,
+            isSynced INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (userId) REFERENCES user_profiles (id)
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_synced ON xp_award_history(isSynced)');
+      }
     } catch (e) {
       AppLogger.warning('Migration check failed', 'migrate', e);
     }
@@ -238,6 +275,51 @@ class DatabaseService {
       {'isSynced': 1},
       where: 'id = ?',
       whereArgs: [xpUpdateId],
+    );
+  }
+
+  // XP Award History operations
+  Future<int> insertXPAwardHistory(XPAwardHistory history) async {
+    final db = await database;
+    return await db.insert('xp_award_history', history.toMap());
+  }
+
+  Future<XPAwardHistory?> getXPAwardHistoryForDate(String userId, DateTime date) async {
+    final db = await database;
+    final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    
+    final List<Map<String, dynamic>> maps = await db.query(
+      'xp_award_history',
+      where: 'userId = ? AND awardDate = ?',
+      whereArgs: [userId, dateStr],
+      limit: 1,
+    );
+
+    if (maps.isNotEmpty) {
+      return XPAwardHistory.fromMap(maps.first);
+    }
+    return null;
+  }
+
+  Future<List<XPAwardHistory>> getUnsyncedXPAwardHistory(String userId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'xp_award_history',
+      where: 'userId = ? AND isSynced = ?',
+      whereArgs: [userId, 0],
+      orderBy: 'createdAt ASC',
+    );
+
+    return maps.map((map) => XPAwardHistory.fromMap(map)).toList();
+  }
+
+  Future<void> markXPAwardHistoryAsSynced(int historyId) async {
+    final db = await database;
+    await db.update(
+      'xp_award_history',
+      {'isSynced': 1},
+      where: 'id = ?',
+      whereArgs: [historyId],
     );
   }
 

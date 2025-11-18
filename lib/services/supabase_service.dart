@@ -351,6 +351,51 @@ class SupabaseService {
   }
 
   // ---------------------------
+  // XP Award History methods
+  // ---------------------------
+
+  /// Check if XP was already awarded for a specific date
+  Future<bool> checkXPAwardedForDate(String userId, DateTime date) async {
+    if (!isAuthenticated) return false;
+
+    try {
+      final dateStr = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+      
+      final response = await _client
+          .from('xp_award_history')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('award_date', dateStr)
+          .limit(1)
+          .timeout(Duration(seconds: 5));
+
+      return (response as List).isNotEmpty;
+    } catch (e) {
+      print('Error checking XP award for date: $e');
+      return false; // Return false on error to allow retry
+    }
+  }
+
+  /// Insert XP award history record into Supabase
+  Future<XPAwardHistory?> insertXPAwardHistory(XPAwardHistory history) async {
+    if (!isAuthenticated) return null;
+
+    try {
+      final response = await _client
+          .from('xp_award_history')
+          .insert(history.toJson())
+          .select()
+          .single()
+          .timeout(Duration(seconds: 5));
+
+      return XPAwardHistory.fromJson(response);
+    } catch (e) {
+      print('Error inserting XP award history: $e');
+      return null;
+    }
+  }
+
+  // ---------------------------
   // User Tag helpers
   // ---------------------------
 

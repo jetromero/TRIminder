@@ -261,6 +261,13 @@ class ImprovedSyncService extends ChangeNotifier {
         print('⚠️ XP sync failed, but continuing with other sync operations');
       }
 
+      // Step 7b: Sync XP award history
+      print('📜 Syncing XP award history...');
+      final historySyncSuccess = await _syncXPAwardHistory();
+      if (!historySyncSuccess) {
+        print('⚠️ XP award history sync failed, but continuing with other sync operations');
+      }
+
       // Step 8: Download and store user profile from Supabase
       print('👤 Downloading user profile from Supabase...');
       try {
@@ -559,6 +566,65 @@ class ImprovedSyncService extends ChangeNotifier {
       return false;
     } catch (e) {
       print('❌ Error syncing XP updates: $e');
+      return false;
+    }
+  }
+
+  /// Sync XP award history from local storage to Supabase
+  Future<bool> _syncXPAwardHistory() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return false;
+
+      final db = DatabaseService();
+      final unsyncedHistory = await db.getUnsyncedXPAwardHistory(userId);
+      
+      if (unsyncedHistory.isEmpty) {
+        print('📜 No unsynced XP award history');
+        return true;
+      }
+
+      final supabaseService = SupabaseService();
+      int syncedCount = 0;
+
+      // Sync each history record individually
+      for (final history in unsyncedHistory) {
+        try {
+          // Check if already exists in Supabase (duplicate prevention)
+          final alreadyExists = await supabaseService.checkXPAwardedForDate(userId, history.awardDate);
+          
+          if (!alreadyExists) {
+            // Insert to Supabase
+            final supabaseHistory = await supabaseService.insertXPAwardHistory(history);
+            
+            if (supabaseHistory != null) {
+              // Mark as synced
+              await db.markXPAwardHistoryAsSynced(history.id);
+              syncedCount++;
+              print('✅ Synced XP award history for ${history.awardDate.toString().split(' ')[0]}: +${history.xpAwarded} XP');
+            } else {
+              print('⚠️ Failed to sync XP award history for ${history.awardDate.toString().split(' ')[0]}');
+            }
+          } else {
+            // Already exists in Supabase, mark as synced locally
+            await db.markXPAwardHistoryAsSynced(history.id);
+            syncedCount++;
+            print('✅ XP award history already exists in Supabase for ${history.awardDate.toString().split(' ')[0]}, marked as synced');
+          }
+        } catch (e) {
+          print('❌ Error syncing individual XP award history: $e');
+          // Continue with next record
+        }
+      }
+
+      if (syncedCount > 0) {
+        print('✅ Synced $syncedCount/${unsyncedHistory.length} XP award history records');
+        return true;
+      }
+      
+      return false;
+    } catch (e) {
+      print('❌ Error syncing XP award history: $e');
       return false;
     }
   }

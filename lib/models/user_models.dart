@@ -313,6 +313,116 @@ class ScreenTimeLog {
   }
 }
 
+// XP Award History model matching Supabase xp_award_history table
+class XPAwardHistory {
+  final int id;
+  final String userId;
+  final DateTime awardDate; // Date only (no time component)
+  final int xpAwarded;
+  final int screenTimeMinutes;
+  final DateTime createdAt;
+  final bool isSynced;
+
+  XPAwardHistory({
+    required this.id,
+    required this.userId,
+    required this.awardDate,
+    required this.xpAwarded,
+    required this.screenTimeMinutes,
+    required this.createdAt,
+    this.isSynced = false,
+  });
+
+  XPAwardHistory copyWith({
+    int? id,
+    String? userId,
+    DateTime? awardDate,
+    int? xpAwarded,
+    int? screenTimeMinutes,
+    DateTime? createdAt,
+    bool? isSynced,
+  }) {
+    return XPAwardHistory(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      awardDate: awardDate ?? this.awardDate,
+      xpAwarded: xpAwarded ?? this.xpAwarded,
+      screenTimeMinutes: screenTimeMinutes ?? this.screenTimeMinutes,
+      createdAt: createdAt ?? this.createdAt,
+      isSynced: isSynced ?? this.isSynced,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'userId': userId,
+      'awardDate': awardDate.toIso8601String().split('T')[0], // Store date only
+      'xpAwarded': xpAwarded,
+      'screenTimeMinutes': screenTimeMinutes,
+      'createdAt': createdAt.toIso8601String(),
+      'isSynced': isSynced ? 1 : 0,
+    };
+  }
+
+  factory XPAwardHistory.fromMap(Map<String, dynamic> map) {
+    // Parse date string (format: YYYY-MM-DD)
+    final dateStr = map['awardDate'] as String;
+    // Remove any time component if present
+    final dateOnly = dateStr.split('T')[0].split(' ')[0];
+    final dateParts = dateOnly.split('-');
+    final awardDate = DateTime(
+      int.parse(dateParts[0]),
+      int.parse(dateParts[1]),
+      int.parse(dateParts[2]),
+    );
+
+    return XPAwardHistory(
+      id: map['id'],
+      userId: map['userId'],
+      awardDate: awardDate,
+      xpAwarded: map['xpAwarded'],
+      screenTimeMinutes: map['screenTimeMinutes'],
+      createdAt: DateTime.parse(map['createdAt']),
+      isSynced: map['isSynced'] == 1,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    // Format date as YYYY-MM-DD for Supabase
+    final dateStr = '${awardDate.year}-${awardDate.month.toString().padLeft(2, '0')}-${awardDate.day.toString().padLeft(2, '0')}';
+    
+    return {
+      'user_id': userId,
+      'award_date': dateStr,
+      'xp_awarded': xpAwarded,
+      'screen_time_minutes': screenTimeMinutes,
+      'created_at': createdAt.toIso8601String(),
+    };
+  }
+
+  factory XPAwardHistory.fromJson(Map<String, dynamic> json) {
+    // Parse award_date (format: YYYY-MM-DD)
+    final dateStr = json['award_date'] as String;
+    final dateParts = dateStr.split('-');
+    final awardDate = DateTime(
+      int.parse(dateParts[0]),
+      int.parse(dateParts[1]),
+      int.parse(dateParts[2]),
+    );
+
+    return XPAwardHistory(
+      id: json['id'] ?? 0,
+      userId: json['user_id'],
+      awardDate: awardDate,
+      xpAwarded: json['xp_awarded'],
+      screenTimeMinutes: json['screen_time_minutes'],
+      createdAt: DateTime.parse(json['created_at']),
+      isSynced: true,
+    );
+  }
+}
+
 // Ranking entry DTO for leaderboards
 class RankingEntry {
   final String userId;
