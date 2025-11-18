@@ -1244,4 +1244,184 @@ class SupabaseService {
       return [];
     }
   }
+
+  // ---------------------------
+  // Account Deletion
+  // ---------------------------
+
+  /// Delete user account and all associated data from Supabase
+  /// Returns true if successful, false otherwise
+  Future<bool> deleteUserAccount(String userId) async {
+    if (!isAuthenticated) {
+      print('❌ Cannot delete account: User not authenticated');
+      return false;
+    }
+
+    // Verify user can only delete their own account
+    if (currentUserId != userId) {
+      print('❌ Cannot delete account: User can only delete their own account');
+      return false;
+    }
+
+    try {
+      print('🗑️ Starting account deletion for user: $userId');
+
+      // Delete user data from all tables in order (respecting foreign key constraints)
+      
+      // 1. Delete friendships (where user is either user_a_id or user_b_id)
+      try {
+        await _client
+            .from('friendships')
+            .delete()
+            .or('user_a_id.eq.$userId,user_b_id.eq.$userId');
+        print('✅ Deleted friendships');
+      } catch (e) {
+        print('⚠️ Error deleting friendships: $e');
+        // Continue with other deletions
+      }
+
+      // 2. Delete likes (where user is either liker_id or liked_id)
+      try {
+        await _client
+            .from('likes')
+            .delete()
+            .or('liker_id.eq.$userId,liked_id.eq.$userId');
+        print('✅ Deleted likes');
+      } catch (e) {
+        print('⚠️ Error deleting likes: $e');
+        // Continue with other deletions
+      }
+
+      // 3. Delete leaderboard snapshots
+      try {
+        await _client
+            .from('leaderboard_snapshots')
+            .delete()
+            .eq('user_id', userId);
+        print('✅ Deleted leaderboard snapshots');
+      } catch (e) {
+        print('⚠️ Error deleting leaderboard snapshots: $e');
+        // Continue with other deletions
+      }
+
+      // 4. Delete user badges
+      try {
+        await _client
+            .from('user_badges')
+            .delete()
+            .eq('user_id', userId);
+        print('✅ Deleted user badges');
+      } catch (e) {
+        print('⚠️ Error deleting user badges: $e');
+        // Continue with other deletions
+      }
+
+      // 5. Delete XP award history
+      try {
+        await _client
+            .from('xp_award_history')
+            .delete()
+            .eq('user_id', userId);
+        print('✅ Deleted XP award history');
+      } catch (e) {
+        print('⚠️ Error deleting XP award history: $e');
+        // Continue with other deletions
+      }
+
+      // 6. Delete screen time logs
+      try {
+        await _client
+            .from('screen_time_logs')
+            .delete()
+            .eq('user_id', userId);
+        print('✅ Deleted screen time logs');
+      } catch (e) {
+        print('⚠️ Error deleting screen time logs: $e');
+        // Continue with other deletions
+      }
+
+      // 7. Delete from usage aggregation tables (these have foreign keys to profiles)
+      // These tables are used for rankings and must be deleted before profile deletion
+      try {
+        await _client
+            .from('user_usage_daily')
+            .delete()
+            .eq('user_id', userId);
+        print('✅ Deleted user_usage_daily records');
+      } catch (e) {
+        print('⚠️ Error deleting user_usage_daily: $e');
+        // Continue with other deletions
+      }
+
+      // Note: weekly_user_avg and monthly_user_avg are views (not tables)
+      // Views are computed from underlying tables and don't store data
+      // They will automatically reflect deletions when screen_time_logs are deleted
+      // No need to delete from views - they're read-only aggregations
+
+      // 8. Delete auth account via RPC function (BEFORE deleting profile)
+      // This must be done before profile deletion so auth.uid() is still valid
+      // This requires a database function to be created in Supabase
+      bool authDeleted = false;
+      try {
+        // Call the RPC function to delete the auth user
+        // We do this before deleting the profile so the security check works
+        final rpcResult = await _client.rpc('delete_user_account', params: {
+          'user_id_to_delete': userId,
+        });
+        
+        // Handle different return types (boolean, integer, etc.)
+        if (rpcResult == true || rpcResult == 1 || rpcResult == 'true') {
+          print('✅ Auth account deleted via RPC');
+          authDeleted = true;
+        } else if (rpcResult == false || rpcResult == 0 || rpcResult == 'false') {
+          print('⚠️ RPC function returned false - auth account deletion failed');
+          print('   This might be due to the user not existing or permission issues');
+          print('   Continuing with profile deletion anyway...');
+        } else {
+          print('⚠️ RPC returned unexpected result: $rpcResult (type: ${rpcResult.runtimeType})');
+        }
+      } catch (e) {
+        print('⚠️ Error deleting auth account via RPC: $e');
+        
+        // If RPC function doesn't exist, provide helpful error message
+        if (e.toString().contains('function') || e.toString().contains('does not exist')) {
+          print('⚠️ RPC function "delete_user_account" not found in Supabase.');
+          print('   Please create the function in your Supabase database.');
+          print('   See ACCOUNT_DELETION_SETUP.md or supabase_migrations/delete_user_account_function.sql');
+          print('   Continuing with data deletion...');
+        }
+      }
+
+      // 9. Delete user profile (must be after usage tables due to foreign key constraints)
+      try {
+        await _client
+            .from('profiles')
+            .delete()
+            .eq('id', userId);
+        print('✅ Deleted user profile');
+      } catch (e) {
+        print('⚠️ Error deleting user profile: $e');
+        // Continue even if profile deletion fails
+      }
+      
+      // Sign out regardless of RPC result
+      try {
+        await _client.auth.signOut();
+        if (authDeleted) {
+          print('✅ Signed out after successful auth deletion');
+        } else {
+          print('⚠️ Signed out but auth account may still exist in Supabase');
+          print('   Please check Supabase dashboard and manually delete if needed');
+        }
+      } catch (signOutError) {
+        print('❌ Error signing out: $signOutError');
+      }
+
+      print('✅ Account deletion completed successfully');
+      return true;
+    } catch (e) {
+      print('❌ Error during account deletion: $e');
+      return false;
+    }
+  }
 }

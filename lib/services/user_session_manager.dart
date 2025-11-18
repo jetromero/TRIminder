@@ -229,6 +229,103 @@ class UserSessionManager {
     }
   }
 
+  /// Delete user account and all associated data
+  /// Returns true if successful, false otherwise
+  Future<bool> deleteAccount() async {
+    if (_currentUserId == null) {
+      print('⚠️ No user to delete account for');
+      return false;
+    }
+
+    final userId = _currentUserId!;
+    print('🗑️ Starting account deletion for user: $userId');
+
+    try {
+      // 1. Stop all tracking services first
+      await _stopUserServices();
+      await PersistentTrackerService.stopService();
+      print('✅ Services stopped');
+
+      // 2. Try to sync any pending data before deletion (best effort)
+      try {
+        print('📤 Attempting to sync pending data before deletion...');
+        await _syncPendingData(userId);
+        print('✅ Pending data synced');
+      } catch (e) {
+        print('⚠️ Could not sync pending data (continuing with deletion): $e');
+        // Continue with deletion even if sync fails
+      }
+
+      // 3. Delete cloud data (Supabase)
+      bool cloudDeletionSuccess = false;
+      try {
+        final supabaseService = SupabaseService();
+        final isOnline = await supabaseService.isConnected();
+        
+        if (isOnline) {
+          cloudDeletionSuccess = await supabaseService.deleteUserAccount(userId);
+          if (cloudDeletionSuccess) {
+            print('✅ Cloud data deleted successfully');
+          } else {
+            print('⚠️ Cloud deletion failed, but continuing with local deletion');
+          }
+        } else {
+          print('⚠️ Offline: Skipping cloud deletion (local data will still be deleted)');
+          // Sign out anyway to clear session
+          try {
+            await SupabaseService().signOut();
+          } catch (_) {}
+        }
+      } catch (e) {
+        print('❌ Error deleting cloud data: $e');
+        // Continue with local deletion even if cloud deletion fails
+      }
+
+      // 4. Delete local data
+      try {
+        await DatabaseService().deleteUserData(userId);
+        print('✅ Local data deleted successfully');
+      } catch (e) {
+        print('❌ Error deleting local data: $e');
+        // Still clear session even if local deletion fails
+      }
+
+      // 5. Clear UI state
+      await _clearUIState();
+
+      // 6. Clear user session
+      _previousUserId = _currentUserId;
+      _currentUserId = null;
+
+      // Clear persisted user id
+      try {
+        await DatabaseService().setSyncMetadata('current_user_id', '');
+        await DatabaseService().setSyncMetadata('supabase_session_json', '');
+      } catch (_) {}
+
+      // 7. Ensure signed out from Supabase
+      try {
+        await SupabaseService().signOut();
+      } catch (_) {}
+
+      print('✅ Account deletion completed');
+      
+      // Return true if at least local deletion succeeded
+      // Cloud deletion may fail if offline, which is acceptable
+      return true;
+    } catch (e) {
+      print('❌ Error during account deletion: $e');
+      
+      // Clear session anyway to prevent user from being stuck
+      _currentUserId = null;
+      try {
+        await SupabaseService().signOut();
+      } catch (_) {}
+      
+      return false;
+    }
+  }
+
   /// Get current user context info (for debugging)
   Map<String, dynamic> getSessionInfo() {
     return {

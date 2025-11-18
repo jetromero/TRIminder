@@ -505,6 +505,72 @@ class DatabaseService {
     await db.delete('sync_metadata');
   }
 
+  /// Delete all user-specific data from local database
+  /// Uses transactions for atomicity
+  /// Does NOT delete shared data (departments, badges definitions)
+  Future<void> deleteUserData(String userId) async {
+    final db = await database;
+    
+    try {
+      // Use transaction to ensure atomicity
+      await db.transaction((txn) async {
+        // Delete user-specific data in order (respecting foreign key constraints)
+        
+        // 1. Delete screen time entries
+        await txn.delete(
+          'screen_time_entries',
+          where: 'userId = ?',
+          whereArgs: [userId],
+        );
+        
+        // 2. Delete XP update logs
+        await txn.delete(
+          'xp_update_logs',
+          where: 'userId = ?',
+          whereArgs: [userId],
+        );
+        
+        // 3. Delete XP award history
+        await txn.delete(
+          'xp_award_history',
+          where: 'userId = ?',
+          whereArgs: [userId],
+        );
+        
+        // 4. Delete user badges
+        await txn.delete(
+          'user_badges',
+          where: 'userId = ?',
+          whereArgs: [userId],
+        );
+        
+        // 5. Delete user profile
+        await txn.delete(
+          'user_profiles',
+          where: 'id = ?',
+          whereArgs: [userId],
+        );
+        
+        // 6. Clear user-specific sync metadata
+        // Keep app-level metadata but remove user-specific entries
+        await txn.delete(
+          'sync_metadata',
+          where: 'key IN (?, ?, ?)',
+          whereArgs: [
+            'current_user_id',
+            'supabase_session_json',
+            'last_successful_sync',
+          ],
+        );
+      });
+      
+      print('✅ Deleted all local data for user: $userId');
+    } catch (e) {
+      print('❌ Error deleting user data: $e');
+      rethrow;
+    }
+  }
+
   // Sync Metadata Operations (for improved sync service)
 
   /// Get sync metadata value by key

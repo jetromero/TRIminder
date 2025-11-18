@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../widgets/permission_status_widget.dart';
 import '../../utils/responsive_utils.dart';
 import '../../services/supabase_service.dart';
+import '../../services/user_session_manager.dart';
 import '../../models/user_models.dart';
 import '../auth/login_screen.dart';
 import '../../config/app_config.dart';
@@ -18,6 +19,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
+  bool _isDeletingAccount = false;
   UserProfile? _userProfile;
 
   @override
@@ -404,7 +406,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: _signOut,
+                onPressed: _isDeletingAccount ? null : _signOut,
                 icon: const Icon(Icons.logout),
                 label: const Text('Sign Out'),
                 style: OutlinedButton.styleFrom(
@@ -413,10 +415,199 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _isDeletingAccount ? null : _showDeleteAccountConfirmation,
+                icon: const Icon(Icons.delete_forever),
+                label: _isDeletingAccount 
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Delete Account'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.red.withOpacity(0.6),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showDeleteAccountConfirmation() async {
+    // First confirmation dialog
+    final firstConfirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Delete Account?'),
+          ],
+        ),
+        content: const Text(
+          'Are you sure you want to delete your account? This action cannot be undone.\n\n'
+          'All your data including:\n'
+          '• Screen time history\n'
+          '• XP and achievements\n'
+          '• Friends and social connections\n'
+          '• All account information\n\n'
+          'will be permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+
+    if (firstConfirm != true || !mounted) return;
+
+    // Second confirmation dialog with text input
+    final textController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.error, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Final Confirmation'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This is your last chance to cancel. Type "DELETE" in the box below to confirm account deletion.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: textController,
+                decoration: const InputDecoration(
+                  labelText: 'Type DELETE to confirm',
+                  border: OutlineInputBorder(),
+                  errorText: null,
+                ),
+                onChanged: (value) {
+                  setDialogState(() {});
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: textController.text.trim() == 'DELETE'
+                  ? () => Navigator.of(context).pop(true)
+                  : null,
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+              child: const Text('Delete Account'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    // Proceed with account deletion
+    await _deleteAccount();
+  }
+
+  Future<void> _deleteAccount() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isDeletingAccount = true;
+    });
+
+    try {
+      final sessionManager = UserSessionManager();
+      final success = await sessionManager.deleteAccount();
+
+      if (!mounted) return;
+
+      if (success) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Account deleted successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        // Navigate to login screen
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false,
+        );
+      } else {
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Account deletion failed. Please try again or contact support if the problem persists.',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Error deleting account: ${e.toString()}\n\n'
+            'Your local data has been deleted. If you were offline, cloud data deletion may be pending.',
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 6),
+        ),
+      );
+
+      // Still navigate to login screen even on error
+      // since local data is likely deleted
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (route) => false,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingAccount = false;
+        });
+      }
+    }
   }
 
   Widget _buildInfoRow(String label, String value) {
