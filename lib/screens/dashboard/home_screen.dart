@@ -2306,40 +2306,40 @@ class _ChallengesTabState extends State<ChallengesTab> {
   }
 }
 
-/// Load current user profile for drawer header
-/// Works offline by checking connectivity first and falling back to local DB
-Future<UserProfile?> _loadCurrentUserProfile() async {
+/// Load current user profile for drawer header (optimized version)
+/// Offline-first: Loads from local DB first, then optionally fetches from cloud if avatar missing
+/// This version prioritizes showing local data immediately
+Future<UserProfile?> _loadCurrentUserProfileOptimized() async {
   try {
     final userId = SupabaseService().currentUserId;
     if (userId == null) return null;
     
-    final supabaseService = SupabaseService();
     final db = DatabaseService();
     
-    // Check connectivity first
+    // STEP 1: Load from local DB first (fast, instant, works offline)
+    final localProfile = await db.getUserProfile(userId);
+    
+    // STEP 2: If online and avatarUrl is missing/null/empty, fetch from cloud in background
+    final supabaseService = SupabaseService();
     final isConnected = await supabaseService.isConnected();
     
-    // Try Supabase first if online
-    if (isConnected) {
+    if (isConnected && (localProfile == null || localProfile.avatarUrl == null || localProfile.avatarUrl!.isEmpty)) {
+      // Fetch from cloud in background (non-blocking)
       try {
-        final profile = await supabaseService.getUserProfile(userId);
-        if (profile != null) {
-          // Cache profile locally for offline access
-          await db.insertUserProfile(profile);
-          return profile;
+        final cloudProfile = await supabaseService.getUserProfile(userId);
+        if (cloudProfile != null) {
+          // Cache cloud profile locally for offline access
+          await db.insertUserProfile(cloudProfile);
+          return cloudProfile; // Return updated profile with avatar
         }
       } catch (e) {
-        print('Supabase profile fetch failed, trying local: $e');
+        print('Supabase profile fetch failed, using local: $e');
+        // Continue with local profile if cloud fetch fails
       }
     }
     
-    // Fallback to local DB (offline mode or Supabase failed)
-    final localProfile = await db.getUserProfile(userId);
-    if (localProfile != null) {
-      return localProfile;
-    }
-    
-    return null;
+    // Return local profile (either found in step 1, or cloud fetch failed/not needed)
+    return localProfile;
   } catch (e) {
     print('Error loading current user profile: $e');
     // Last resort: try local DB even if there was an error
@@ -2490,9 +2490,10 @@ class _AppDrawer extends StatelessWidget {
   }
 
   /// Build profile header at top of drawer
+  /// Shows local profile immediately, then updates from cloud if avatar missing
   Widget _buildProfileHeader(BuildContext context) {
     return FutureBuilder<UserProfile?>(
-      future: _loadCurrentUserProfile(),
+      future: _loadCurrentUserProfileOptimized(),
       builder: (context, snapshot) {
         final profile = snapshot.data;
         

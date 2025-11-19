@@ -935,6 +935,43 @@ class SupabaseService {
     }
   }
 
+  /// Get friends count for a specific user
+  /// Uses database function to bypass RLS and get accurate count for any user
+  /// Only counts friendships with status = 'accepted' (same as getFriends())
+  Future<int> getFriendsCountForUser(String userId) async {
+    try {
+      if (userId.isEmpty) return 0;
+      
+      // Use database function to get friends count (bypasses RLS)
+      final response = await _client.rpc('get_user_friends_count', params: {
+        'target_user_id': userId,
+      });
+      
+      final count = (response as int?) ?? 0;
+      print('Friends count from function for user $userId: $count');
+      return count;
+    } catch (e) {
+      print('Error fetching friends count via function for user $userId: $e');
+      print('Falling back to direct query...');
+      
+      // Fallback: use same logic as getFriends() to ensure consistency
+      try {
+        final rows = await _client
+            .from('friendships')
+            .select('user_a_id, user_b_id, status')
+            .eq('status', 'accepted')  // Only count accepted friendships
+            .or('user_a_id.eq.$userId,user_b_id.eq.$userId');
+        
+        final count = rows.length;
+        print('Friends count from fallback query for user $userId: $count');
+        return count;
+      } catch (fallbackError) {
+        print('Fallback query also failed: $fallbackError');
+        return 0;
+      }
+    }
+  }
+
   Future<List<UserProfile>> _fetchProfilesByIds(List<String> ids) async {
     if (ids.isEmpty) return [];
     try {

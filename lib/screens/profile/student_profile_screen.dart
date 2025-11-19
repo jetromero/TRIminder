@@ -157,14 +157,13 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         }
       }
 
-      // Load friends count (only when online, or use cached count)
+      // Load friends count for the profile owner
       int friendsCount = 0;
-      if (isConnected) {
+      if (isConnected && targetUserId != null) {
         try {
-          final friends = await supabaseService.getFriends();
-          friendsCount = friends.length;
+          friendsCount = await supabaseService.getFriendsCountForUser(targetUserId);
         } catch (e) {
-          print('Friends fetch failed: $e');
+          print('Friends count fetch failed: $e');
         }
       }
 
@@ -195,12 +194,14 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
     try {
       bool success = false;
       String message = '';
+      bool needsReload = false; // Track if friends count changed
 
       switch (_friendshipStatus) {
         case 'none':
           success = await SupabaseService().sendFriendRequest(_profile!.id);
           message = success ? 'Friend request sent' : 'Failed to send friend request';
           if (success) _friendshipStatus = 'pending_out';
+          // No reload needed - only button state changes
           break;
         case 'pending_in':
           // Get the friendship ID to accept
@@ -212,7 +213,10 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           if (friendship['id'] != null) {
             success = await SupabaseService().acceptFriendRequest(friendship['id'] as int);
             message = success ? 'Friend request accepted' : 'Failed to accept request';
-            if (success) _friendshipStatus = 'friends';
+            if (success) {
+              _friendshipStatus = 'friends';
+              needsReload = true; // Friends count increased
+            }
           }
           break;
         case 'pending_out':
@@ -226,6 +230,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             success = await SupabaseService().cancelMyPendingRequest(friendship['id'] as int);
             message = success ? 'Friend request cancelled' : 'Failed to cancel request';
             if (success) _friendshipStatus = 'none';
+            // No reload needed - only button state changes
           }
           break;
         case 'friends':
@@ -234,6 +239,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           if (success) {
             message = 'Unfriended ${_profile!.fullName}';
             _friendshipStatus = 'none';
+            needsReload = true; // Friends count decreased
           } else {
             message = 'Failed to unfriend. Check console logs for details. If this persists, ensure RLS policies are set up (see supabase_migrations/friendships_rls_policies.sql)';
           }
@@ -244,16 +250,17 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
-        // Reload profile to update friendship status
+        // Update UI immediately
         if (success) {
-          // Update state immediately for better UX
           setState(() {
-            if (_friendshipStatus == 'friends') {
-              _friendshipStatus = 'none';
-            }
+            // State is already updated in the switch statement above
+            // Just trigger UI rebuild to show updated button
           });
-          // Then reload to ensure consistency
-          await _loadProfile();
+          // Only reload if friends count changed (accepting/unfriending)
+          if (needsReload) {
+            await _loadProfile();
+          }
+          // For sending/canceling requests, button state is already updated, no reload needed
         } else {
           setState(() {});
         }
