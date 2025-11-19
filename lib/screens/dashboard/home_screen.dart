@@ -3115,81 +3115,157 @@ class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
                           )
                     : RefreshIndicator(
                         onRefresh: () => _fetchAllRankings(reset: true),
-                        child: CustomScrollView(
+                        child: ListView.separated(
                           controller: _scrollController,
                           physics: const ClampingScrollPhysics(),
-                          slivers: [
-                            // Top 3 Podium Section
-                            if (_filteredEntries.length >= 3)
-                              SliverToBoxAdapter(
-                                child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                                  child: Column(
-                                    children: [
-                                      _Top3Podium(
-                                        entries: _filteredEntries.take(3).toList(),
-                                        currentUserId: SupabaseService().currentUserId,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          itemCount: _filteredEntries.length + (_hasMore ? 1 : 0),
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            if (index >= _filteredEntries.length) {
+                              if (_hasMore && !_loading) {
+                                _loadMore();
+                              }
+                              if (_hasMore) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(child: CircularProgressIndicator()),
+                                );
+                              }
+                              return const SizedBox.shrink();
+                            }
+                            
+                            final entry = _filteredEntries[index];
+                            final currentUserId = SupabaseService().currentUserId;
+                            final rank = index + 1;
+                            final name = entry.fullName ?? entry.userTag ?? 'Unknown';
+                            final screenTime = _formatScreenTime(entry.valueMinutes);
+                            
+                            return ListTile(
+                              leading: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.center,
+                                children: [
+                                  // Circular border container
+                                  Container(
+                                    width: 40 + 6, // avatar size + border padding
+                                    height: 40 + 6,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: _getRankingBorderColor(context, rank),
+                                        width: 2,
                                       ),
-                                      const SizedBox(height: 20),
-                                      // "Students" section header
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                                        child: Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              'Students',
-                                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: _getRankingBorderColor(context, rank).withOpacity(0.25),
+                                          blurRadius: 6,
+                                          spreadRadius: 1,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Center(
+                                      child: AvatarWidget.small(
+                                        avatarUrl: entry.avatarUrl,
+                                        fullName: name,
+                                      ),
+                                    ),
+                                  ),
+                                  // Rank badge positioned at bottom center
+                                  Positioned(
+                                    bottom: -6,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: _getRankColor(context, rank),
+                                        borderRadius: BorderRadius.circular(10),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: _getRankingBorderColor(context, rank).withOpacity(0.2),
+                                            blurRadius: 4,
+                                            spreadRadius: 0.5,
+                                          ),
+                                        ],
+                                      ),
+                                      child: Text(
+                                        '$rank',
+                                        style: TextStyle(
+                                          color: _getRankTextColor(context, rank),
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: rank <= 3 ? 11 : 9,
                                         ),
                                       ),
-                                      const SizedBox(height: 8),
-                                    ],
+                                    ),
                                   ),
+                                ],
+                              ),
+                              title: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      name,
+                                      style: TextStyle(
+                                        fontWeight: entry.userId == currentUserId 
+                                            ? FontWeight.bold 
+                                            : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ),
+                                  if (entry.userId == currentUserId)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Theme.of(context).colorScheme.primaryContainer,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        'You',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              subtitle: Text(
+                                entry.departmentName ?? '—',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 ),
                               ),
-                            // Remaining rankings list (starting from rank 4)
-                            SliverPadding(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                              sliver: SliverList(
-                                delegate: SliverChildBuilderDelegate(
-                                  (context, index) {
-                                    // Skip top 3 entries (they're shown in podium)
-                                    final actualIndex = _filteredEntries.length >= 3 ? index + 3 : index;
-                                    
-                                    if (actualIndex >= _filteredEntries.length) {
-                                      if (actualIndex == _filteredEntries.length && _hasMore && !_loading) {
-                                        _loadMore();
-                                      }
-                                      if (_hasMore) {
-                                        return const Padding(
-                                          padding: EdgeInsets.symmetric(vertical: 16),
-                                          child: Center(child: CircularProgressIndicator()),
-                                        );
-                                      }
-                                      return const SizedBox.shrink();
-                                    }
-                                    
-                                    final entry = _filteredEntries[actualIndex];
-                                    // Calculate rank based on original position in sorted list
-                                    final rank = _allEntries.indexWhere((e) => e.userId == entry.userId) + 1;
-                                    
-                                    return _RankingTile(
-                                      rank: rank > 0 ? rank : actualIndex + 1,
-                                      entry: entry,
-                                      you: entry.userId == SupabaseService().currentUserId,
-                                    );
-                                  },
-                                  childCount: _filteredEntries.length >= 3 
-                                      ? (_filteredEntries.length - 3) + (_hasMore ? 1 : 0)
-                                      : _filteredEntries.length + (_hasMore ? 1 : 0),
-                                ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    screenTime,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  Text(
+                                    'screen time',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ],
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => StudentProfileScreen(userId: entry.userId),
+                                  ),
+                                );
+                              },
+                            );
+                          },
                         ),
                       ),
           ),
@@ -3210,6 +3286,46 @@ class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
       selectedColor: Theme.of(context).colorScheme.primaryContainer,
       checkmarkColor: Theme.of(context).colorScheme.onPrimaryContainer,
     );
+  }
+
+  String _formatScreenTime(int minutes) {
+    if (minutes == 0) return '0m';
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (hours > 0) {
+      return '${hours}h ${mins}m';
+    } else {
+      return '${mins}m';
+    }
+  }
+
+  /// Get border color for ranking list avatars (subtle colors that don't compete with podium)
+  Color _getRankingBorderColor(BuildContext context, int rank) {
+    // Use theme colors for positions - subtle and elegant
+    if (rank <= 10) {
+      // Top 10 get a subtle primary color border
+      return Theme.of(context).colorScheme.primary.withOpacity(0.6);
+    } else if (rank <= 25) {
+      // Next tier gets secondary color
+      return Theme.of(context).colorScheme.secondary.withOpacity(0.5);
+    } else {
+      // Others get tertiary color - very subtle
+      return Theme.of(context).colorScheme.tertiary.withOpacity(0.4);
+    }
+  }
+
+  /// Get rank badge color (gold for 1st, silver for 2nd, bronze for 3rd, default for others)
+  Color _getRankColor(BuildContext context, int rank) {
+    if (rank == 1) return const Color(0xFFFFD700); // Gold
+    if (rank == 2) return const Color(0xFFC0C0C0); // Silver
+    if (rank == 3) return const Color(0xFFCD7F32); // Bronze
+    return Theme.of(context).colorScheme.primaryContainer;
+  }
+
+  /// Get rank text color (dark for top 3, theme color for others)
+  Color _getRankTextColor(BuildContext context, int rank) {
+    if (rank <= 3) return Colors.black87;
+    return Theme.of(context).colorScheme.onPrimaryContainer;
   }
 }
 

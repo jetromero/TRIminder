@@ -741,20 +741,41 @@ class _AppDrawer extends StatelessWidget {
                     ],
                   ),
                 );
-
                 if (confirmed == true) {
+                  if (!context.mounted) return;
+                  showDialog(
+                    context: context,
+                    useRootNavigator: true,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
                   try {
-                    await SupabaseService().signOut();
+                    await UserSessionManager().logoutCurrentUser();
                     if (context.mounted) {
+                      Navigator.of(context, rootNavigator: true).pop(); // close loading
                       Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (context) => const LoginScreen()),
-                        (Route<dynamic> route) => false,
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                        (route) => false,
                       );
                     }
                   } catch (e) {
                     if (context.mounted) {
+                      Navigator.of(context, rootNavigator: true).pop(); // close loading
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Logout failed: $e')),
+                        SnackBar(
+                          content: Text('Logout error: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (context) => const LoginScreen(),
+                        ),
+                        (route) => false,
                       );
                     }
                   }
@@ -767,7 +788,8 @@ class _AppDrawer extends StatelessWidget {
     );
   }
 
-  /// Build profile header at top of drawer (matching home screen drawer)
+  /// Build profile header at top of drawer
+  /// Shows local profile immediately, then updates from cloud if avatar missing
   Widget _buildProfileHeader(BuildContext context) {
     return FutureBuilder<UserProfile?>(
       future: _loadCurrentUserProfileOptimized(),
@@ -856,51 +878,41 @@ class _AppDrawer extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                // Level and XP progress
+                // XP Progress Bar
                 Row(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
+                    Icon(
+                      Icons.star,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Level $currentLevel',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        'Level $currentLevel',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$xpInCurrentLevel / $xpNeededForNextLevel XP',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: currentProgress,
-                              minHeight: 6,
-                              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Theme.of(context).colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        ],
+                    const Spacer(),
+                    Text(
+                      '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: currentProgress,
+                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  minHeight: 6,
                 ),
               ],
             ),
