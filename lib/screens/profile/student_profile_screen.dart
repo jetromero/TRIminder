@@ -37,6 +37,61 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
     _loadProfile();
   }
 
+  /// Update friendship status and optionally friends count without reloading entire profile
+  /// This prevents unnecessary page reloads for all friend actions
+  /// [updateFriendsCount] - whether to update friends count (true for accept/unfriend)
+  Future<void> _updateFriendshipData({bool updateFriendsCount = false}) async {
+    if (_profile == null) return;
+    
+    try {
+      final supabaseService = SupabaseService();
+      final isConnected = await supabaseService.isConnected();
+      final currentUserId = SupabaseService().currentUserId;
+      final targetUserId = widget.userId ?? currentUserId;
+      final isOwnProfile = targetUserId == currentUserId;
+      
+      if (isConnected && targetUserId != null) {
+        // Update friends count only if requested (for accept/unfriend actions)
+        int? friendsCount;
+        if (updateFriendsCount) {
+          try {
+            friendsCount = await supabaseService.getFriendsCountForUser(targetUserId);
+          } catch (e) {
+            print('Friends count update failed: $e');
+          }
+        }
+        
+        // Always update friendship status if viewing other user's profile
+        // This ensures consistency after any action (send, cancel, accept, unfriend)
+        String? friendshipStatus;
+        if (!isOwnProfile && currentUserId != null) {
+          try {
+            friendshipStatus = await supabaseService.getFriendshipStatus(targetUserId);
+          } catch (e) {
+            print('Friendship status update failed: $e');
+          }
+        }
+        
+        if (mounted) {
+          setState(() {
+            if (friendsCount != null) {
+              _friendsCount = friendsCount;
+            }
+            if (friendshipStatus != null) {
+              _friendshipStatus = friendshipStatus;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      print('Error updating friendship data: $e');
+      // If update fails, fall back to full reload only if critical
+      if (updateFriendsCount && mounted) {
+        await _loadProfile();
+      }
+    }
+  }
+
   Future<void> _loadProfile() async {
     setState(() => _isLoading = true);
 
@@ -250,17 +305,11 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
-        // Update UI immediately
+        // Update UI immediately - use optimized update for all actions
         if (success) {
-          setState(() {
-            // State is already updated in the switch statement above
-            // Just trigger UI rebuild to show updated button
-          });
-          // Only reload if friends count changed (accepting/unfriending)
-          if (needsReload) {
-            await _loadProfile();
-          }
-          // For sending/canceling requests, button state is already updated, no reload needed
+          // Update friendship status for all actions, friends count only when it changes
+          // This ensures consistency and prevents full page reloads
+          await _updateFriendshipData(updateFriendsCount: needsReload);
         } else {
           setState(() {});
         }

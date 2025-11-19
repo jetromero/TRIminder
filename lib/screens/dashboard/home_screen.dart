@@ -364,6 +364,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       final coordinator = SyncCoordinator();
       await coordinator.requestSync(() => ImprovedSyncService().performSync());
       
+      // Check for end of day XP awards before refreshing tracker data
+      await _automaticTracker.checkForEndOfDay();
+      
       // Refresh tracker data
       await _automaticTracker.refreshTodayData();
       
@@ -398,6 +401,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
           userProfile = profile;
           isLoading = false;
         });
+        
+        // Check for end of day XP awards after profile is loaded
+        await _automaticTracker.checkForEndOfDay();
       }
     } catch (e) {
       print('Error loading user data: $e');

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'package:cached_network_image/cached_network_image.dart';
 
 /// Reusable avatar widget with fallback to initials
 class AvatarWidget extends StatelessWidget {
@@ -92,26 +93,21 @@ class AvatarWidget extends StatelessWidget {
       ),
       child: avatarUrl != null && avatarUrl!.isNotEmpty
           ? ClipOval(
-              child: Image.network(
-                avatarUrl!,
+              child: CachedNetworkImage(
+                imageUrl: avatarUrl!,
                 width: size,
                 height: size,
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return _buildInitialsWidget();
-                },
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return Center(
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      value: loadingProgress.expectedTotalBytes != null
-                          ? loadingProgress.cumulativeBytesLoaded /
-                              loadingProgress.expectedTotalBytes!
-                          : null,
-                    ),
-                  );
-                },
+                placeholder: (context, url) => Center(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                ),
+                errorWidget: (context, url, error) => _buildInitialsWidget(),
+                // Cache images to disk for offline access
+                cacheKey: avatarUrl!,
+                maxWidthDiskCache: (size * 2).toInt(), // Cache at 2x resolution for better quality
+                maxHeightDiskCache: (size * 2).toInt(),
               ),
             )
           : _buildInitialsWidget(),
