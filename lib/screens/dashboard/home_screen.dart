@@ -9,6 +9,7 @@ import '../../services/improved_sync_service.dart';
 import '../../services/sync_coordinator.dart';
 import '../../services/user_session_manager.dart';
 import '../../models/user_models.dart';
+import '../../models/department_models.dart';
 import '../../utils/level_calculator.dart';
 import '../../utils/responsive_utils.dart';
 import '../../widgets/automatic_tracker_display.dart';
@@ -1331,7 +1332,7 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
             child: TabBar(
               controller: _tabController,
             tabs: const [
-              Tab(text: 'EVSU'),
+              Tab(text: 'All'),
               Tab(text: 'Department'),
               Tab(text: 'Friends'),
             ],
@@ -1340,38 +1341,49 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
               unselectedLabelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w500),
             ),
           ),
-          // Second row: participants count (left) and period pill (right)
+          // Period tabs (Day, Week, Month, Year)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                Text('${_entries.length} participants'),
-                  const Spacer(),
-                Row(children: [
-                  _CurrentPeriodButton(
-                    period: _period,
-                    onCycle: () {
-                      setState(() {
-                        _period = _period == 'daily'
-                            ? 'weekly'
-                            : _period == 'weekly' ? 'monthly' : 'daily';
-                      });
-                      _fetchRankings(reset: true, forceCurrentPeriod: true);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  _SortToggleButton(
-                    ascending: _ascending,
-                    onToggle: () {
-                      setState(() { _ascending = !_ascending; });
-                      _fetchRankings(reset: true, forceCurrentPeriod: true);
-                    },
-                  ),
-                ]),
-                ],
-              ),
+            child: Row(
+              children: [
+                _PeriodTab(
+                  label: 'Day',
+                  isSelected: _period == 'daily',
+                  onTap: () {
+                    setState(() { _period = 'daily'; });
+                    _fetchRankings(reset: true, forceCurrentPeriod: true);
+                  },
+                ),
+                const SizedBox(width: 8),
+                _PeriodTab(
+                  label: 'Week',
+                  isSelected: _period == 'weekly',
+                  onTap: () {
+                    setState(() { _period = 'weekly'; });
+                    _fetchRankings(reset: true, forceCurrentPeriod: true);
+                  },
+                ),
+                const SizedBox(width: 8),
+                _PeriodTab(
+                  label: 'Month',
+                  isSelected: _period == 'monthly',
+                  onTap: () {
+                    setState(() { _period = 'monthly'; });
+                    _fetchRankings(reset: true, forceCurrentPeriod: true);
+                  },
+                ),
+                const Spacer(),
+                _SortToggleButton(
+                  ascending: _ascending,
+                  onToggle: () {
+                    setState(() { _ascending = !_ascending; });
+                    _fetchRankings(reset: true, forceCurrentPeriod: true);
+                  },
+                ),
+              ],
             ),
-          const SizedBox(height: 12),
+          ),
+          const SizedBox(height: 1),
             Expanded(
               child: TabBarView(
               controller: _tabController,
@@ -1438,29 +1450,81 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
       );
     }
 
+    // Get Top 3 and remaining entries
+    final top3 = _entries.take(3).toList();
+    final remaining = _entries.skip(3).take(7).toList(); // Positions 4-10
+    final currentUserId = SupabaseService().currentUserId;
+
     return RefreshIndicator(
       onRefresh: () async { await _fetchRankings(reset: true); },
-      child: ListView.builder(
+      child: ListView(
         physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.all(16),
-        itemCount: _entries.length + (_hasMore ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= _entries.length) {
-            _fetchRankings();
-            return const Padding(
+        children: [
+          // Top 3 Podium Section
+          if (top3.isNotEmpty) ...[
+            _Top3Podium(
+              entries: top3,
+              currentUserId: currentUserId,
+            ),
+            const SizedBox(height: 20),
+          ],
+          
+          // "Students" section
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Students',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ViewAllRankingsScreen(
+                          scope: _scope,
+                          period: _period,
+                          ascending: _ascending,
+                          departmentId: _scope == 'department' ? _myDepartmentId : null,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('View all'),
+                ),
+              ],
+            ),
+          ),
+          
+          // Ranked List (Positions 4-10)
+          if (remaining.isNotEmpty) ...[
+            ...remaining.asMap().entries.map((entry) {
+              final index = entry.key;
+              final rankingEntry = entry.value;
+              return _RankingTile(
+                rank: index + 4, // Start from rank 4
+                name: rankingEntry.fullName ?? rankingEntry.userTag ?? 'Unknown',
+                you: rankingEntry.userId == currentUserId,
+                minutes: rankingEntry.valueMinutes,
+                department: rankingEntry.departmentName,
+              );
+            }),
+            const SizedBox(height: 16),
+          ],
+          
+          // Loading indicator for pagination
+          if (_hasMore && _entries.length > 10)
+            const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          final entry = _entries[index];
-          return _RankingTile(
-            rank: index + 1,
-            name: entry.fullName ?? entry.userTag ?? 'Unknown',
-            you: entry.userId == SupabaseService().currentUserId,
-            minutes: entry.valueMinutes,
-            department: entry.departmentName,
-          );
-        },
+            ),
+        ],
       ),
     );
   }
@@ -1468,36 +1532,40 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
 
 // (old custom scope tab removed; now using TabBar)
 
-class _CurrentPeriodButton extends StatelessWidget {
-  final String period;
-  final VoidCallback onCycle;
-  const _CurrentPeriodButton({required this.period, required this.onCycle});
+/// Period Tab Widget
+class _PeriodTab extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _PeriodTab({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    String label;
-    IconData icon;
-    if (period == 'daily') { label = 'Today'; icon = Icons.schedule; }
-    else if (period == 'weekly') { label = 'Weekly'; icon = Icons.calendar_view_week; }
-    else { label = 'Monthly'; icon = Icons.calendar_month; }
-
     return InkWell(
-      onTap: onCycle,
-      borderRadius: BorderRadius.circular(24),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          color: isSelected
+              ? Theme.of(context).colorScheme.surfaceVariant
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 18),
-            const SizedBox(width: 8),
-            Text(label),
-          ],
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+            color: isSelected
+                ? Theme.of(context).colorScheme.onSurfaceVariant
+                : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+          ),
         ),
       ),
     );
@@ -1527,7 +1595,354 @@ class _SortToggleButton extends StatelessWidget {
   }
 }
 
-// (removed old _PeriodToggle, now using automatic period badge)
+/// Top 3 Podium Widget
+class _Top3Podium extends StatelessWidget {
+  final List<RankingEntry> entries;
+  final String? currentUserId;
+
+  const _Top3Podium({
+    required this.entries,
+    this.currentUserId,
+  });
+
+  String _formatScreenTime(int minutes) {
+    if (minutes == 0) return '0m';
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (hours > 0) {
+      return '${hours}h ${mins}m';
+    } else {
+      return '${mins}m';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Ensure we have at least 1 entry, pad with nulls if needed
+    final first = entries.isNotEmpty ? entries[0] : null;
+    final second = entries.length > 1 ? entries[1] : null;
+    final third = entries.length > 2 ? entries[2] : null;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 2nd place (left, slightly lower)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 50, bottom: 0), // Push down slightly
+              child: second != null
+                  ? _buildPodiumCard(
+                      context,
+                      entry: second,
+                      rank: 2,
+                      isCenter: false,
+                      isLeft: true,
+                    )
+                  : _buildEmptyPodiumCard(context, rank: 2, isCenter: false),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // 1st place (center, highest) - larger
+          Expanded(
+            flex: 1,
+            child: first != null
+                ? _buildPodiumCard(
+                    context,
+                    entry: first,
+                    rank: 1,
+                    isCenter: true,
+                    isLeft: false,
+                  )
+                : _buildEmptyPodiumCard(context, rank: 1, isCenter: true),
+          ),
+          const SizedBox(width: 4),
+          // 3rd place (right, slightly lower)
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 50, bottom: 0), // Push down slightly
+              child: third != null
+                  ? _buildPodiumCard(
+                      context,
+                      entry: third,
+                      rank: 3,
+                      isCenter: false,
+                      isLeft: false,
+                    )
+                  : _buildEmptyPodiumCard(context, rank: 3, isCenter: false),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyPodiumCard(BuildContext context, {required int rank, required bool isCenter}) {
+    // Colors and sizes based on rank
+    Color borderColor;
+    Color badgeColor;
+    double avatarSize;
+
+    if (rank == 1) {
+      borderColor = Colors.amber.shade700; // Gold
+      badgeColor = Colors.amber.shade600;
+      avatarSize = 100;
+    } else if (rank == 2) {
+      borderColor = Colors.grey.shade400; // Silver
+      badgeColor = Colors.grey.shade500;
+      avatarSize = 80;
+    } else {
+      borderColor = Colors.orange.shade600; // Bronze
+      badgeColor = Colors.orange.shade700;
+      avatarSize = 80;
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Empty avatar with border to maintain spacing
+        Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: avatarSize + 8,
+              height: avatarSize + 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: borderColor.withOpacity(0.3),
+                  width: 4,
+                ),
+              ),
+            ),
+            CircleAvatar(
+              radius: avatarSize / 2,
+              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+              child: Icon(
+                Icons.person,
+                size: avatarSize * 0.4,
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+              ),
+            ),
+            // Rank badge
+            Positioned(
+              bottom: -4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeColor.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$rank',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Empty space for name
+        SizedBox(
+          width: double.infinity,
+          height: isCenter ? 20 : 18,
+        ),
+        const SizedBox(height: 4),
+        // Empty space for department
+        SizedBox(
+          width: double.infinity,
+          height: isCenter ? 16 : 14,
+        ),
+        const SizedBox(height: 4),
+        // Empty space for screen time
+        SizedBox(
+          width: double.infinity,
+          height: isCenter ? 18 : 16,
+        ),
+      ],
+    );
+  }
+
+  String _getFirstName(String fullName) {
+    if (fullName.isEmpty) return 'Unknown';
+    final parts = fullName.trim().split(' ');
+    return parts.first;
+  }
+
+  Widget _buildPodiumCard(
+    BuildContext context, {
+    required RankingEntry? entry,
+    required int rank,
+    required bool isCenter,
+    required bool isLeft,
+  }) {
+    if (entry == null) {
+      return const SizedBox.shrink();
+    }
+
+    final isYou = entry.userId == currentUserId;
+    final fullName = entry.fullName ?? entry.userTag ?? 'Unknown';
+    final firstName = _getFirstName(fullName);
+    final department = entry.departmentName ?? '—';
+    final screenTime = _formatScreenTime(entry.valueMinutes);
+
+    // Colors and sizes based on rank
+    Color borderColor;
+    Color badgeColor;
+    double avatarSize;
+    IconData? crownIcon;
+
+    if (rank == 1) {
+      borderColor = Colors.amber.shade700; // Gold
+      badgeColor = Colors.amber.shade600;
+      avatarSize = 100;
+      crownIcon = Icons.emoji_events;
+    } else if (rank == 2) {
+      borderColor = Colors.grey.shade400; // Silver
+      badgeColor = Colors.grey.shade500;
+      avatarSize = 80;
+    } else {
+      borderColor = Colors.orange.shade600; // Bronze
+      badgeColor = Colors.orange.shade700;
+      avatarSize = 80;
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Avatar with border
+        Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: avatarSize + 8,
+              height: avatarSize + 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: borderColor,
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: borderColor.withOpacity(0.3),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+            ),
+            CircleAvatar(
+              radius: avatarSize / 2,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              child: Text(
+                firstName.isNotEmpty ? firstName[0].toUpperCase() : '?',
+                style: TextStyle(
+                  fontSize: avatarSize * 0.4,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                ),
+              ),
+            ),
+            // Crown icon for 1st place
+            if (rank == 1 && crownIcon != null)
+              Positioned(
+                top: -8,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade700,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    crownIcon,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                ),
+              ),
+            // Rank badge
+            Positioned(
+              bottom: -8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$rank',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // First name only - highlighted if current user
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            firstName,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: isCenter ? 16 : 14,
+              color: isYou 
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(height: 4),
+        // Department
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            department,
+            style: TextStyle(
+              fontSize: isCenter ? 12 : 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(height: 4),
+        // Screen time
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            screenTime,
+            style: TextStyle(
+              fontSize: isCenter ? 14 : 12,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _RankingTile extends StatelessWidget {
   final int rank;
@@ -1543,50 +1958,101 @@ class _RankingTile extends StatelessWidget {
     this.department,
   });
 
+  String _formatScreenTime(int minutes) {
+    if (minutes == 0) return '0m';
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (hours > 0) {
+      return '${hours}h ${mins}m';
+    } else {
+      return '${mins}m';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hours = minutes ~/ 60;
     final mins = minutes % 60;
     final timeStr = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
 
-              return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-                child: Padding(
-        padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-            CircleAvatar(radius: 18, child: Text('$rank')),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                  Row(children: [
-                    Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold))),
-                    if (you) Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text('You', style: TextStyle(fontSize: 12)),
-                    ),
-                  ]),
-                  const SizedBox(height: 2),
-                  Text(department ?? '—', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                Text(timeStr, style: const TextStyle(fontWeight: FontWeight.bold)),
-                const Text('screen time', style: TextStyle(fontSize: 12)),
-                        ],
-            )
-                    ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      child: Row(
+        children: [
+          // Rank number
+          SizedBox(
+            width: 16,
+            child: Text(
+              '$rank',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Avatar
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Name and department
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    color: you 
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurface,
                   ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  department ?? '—',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Screen time
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                timeStr,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              Text(
+                'screen time',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -2191,6 +2657,399 @@ class _ProfileTabState extends State<ProfileTab> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// View All Rankings Screen with search and filters
+class ViewAllRankingsScreen extends StatefulWidget {
+  final String scope; // 'evsu' | 'department' | 'friends'
+  final String period; // 'daily' | 'weekly' | 'monthly'
+  final bool ascending;
+  final int? departmentId;
+
+  const ViewAllRankingsScreen({
+    super.key,
+    required this.scope,
+    required this.period,
+    required this.ascending,
+    this.departmentId,
+  });
+
+  @override
+  State<ViewAllRankingsScreen> createState() => _ViewAllRankingsScreenState();
+}
+
+class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  List<RankingEntry> _allEntries = [];
+  List<RankingEntry> _filteredEntries = [];
+  bool _loading = false;
+  String _searchQuery = '';
+  String _selectedPeriod = 'daily';
+  int? _selectedDepartmentId;
+  int? _myDepartmentId; // Current user's department ID
+  List<Department> _departments = [];
+  bool _loadingDepartments = false;
+  final ScrollController _scrollController = ScrollController();
+  int _limit = 50;
+  int _offset = 0;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedPeriod = widget.period;
+    _selectedDepartmentId = widget.departmentId;
+    // Only load department if department scope
+    if (widget.scope == 'department') {
+      _loadMyDepartment();
+    } else {
+      // For EVSU and Friends scope, fetch immediately
+      _fetchAllRankings();
+    }
+    _searchController.addListener(_onSearchChanged);
+    _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadMyDepartment() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return;
+      final profile = await SupabaseService().getUserProfile(userId);
+      setState(() { 
+        _myDepartmentId = profile?.departmentId;
+      });
+      // Fetch rankings after loading department
+      if (_myDepartmentId != null) {
+        _fetchAllRankings();
+      }
+    } catch (e) {
+      print('Error loading user department: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    setState(() {
+      _searchQuery = _searchController.text.toLowerCase();
+      _applyFilters();
+    });
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
+      if (!_loading && _hasMore) {
+        _loadMore();
+      }
+    }
+  }
+
+  Future<void> _loadDepartments() async {
+    if (widget.scope == 'evsu') {
+      setState(() { _loadingDepartments = true; });
+      try {
+        final response = await SupabaseService().client
+            .from('departments')
+            .select('id, name')
+            .order('name');
+        setState(() {
+          _departments = (response as List)
+              .map((json) => Department.fromMap(json))
+              .toList();
+        });
+      } catch (e) {
+        print('Error loading departments: $e');
+      } finally {
+        if (mounted) setState(() { _loadingDepartments = false; });
+      }
+    }
+  }
+
+  Future<void> _fetchAllRankings({bool reset = false}) async {
+    if (_loading) return;
+    // Don't fetch if department scope and user's department is not loaded yet
+    if (widget.scope == 'department' && _myDepartmentId == null) return;
+    
+    setState(() {
+      _loading = true;
+      if (reset) {
+        _offset = 0;
+        _hasMore = true;
+        _allEntries = [];
+      }
+    });
+
+    try {
+      final svc = SupabaseService();
+      List<RankingEntry> page = [];
+
+      if (widget.scope == 'friends') {
+        if (_selectedPeriod == 'daily') {
+          page = await svc.getFriendsDailyRankings(
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        } else if (_selectedPeriod == 'weekly') {
+          page = await svc.getFriendsWeeklyRankings(
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        } else {
+          page = await svc.getFriendsMonthlyRankings(
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        }
+        // Filter friends by department only if department scope
+        if (widget.scope == 'department' && _myDepartmentId != null) {
+          page = page.where((e) => e.departmentId == _myDepartmentId).toList();
+        }
+      } else {
+        // Use department ID only for department scope, otherwise null (all departments)
+        final depId = widget.scope == 'department' ? _myDepartmentId : null;
+        if (_selectedPeriod == 'daily') {
+          page = await svc.getDailyRankings(
+            departmentId: depId,
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        } else if (_selectedPeriod == 'weekly') {
+          page = await svc.getWeeklyRankings(
+            departmentId: depId,
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        } else {
+          page = await svc.getMonthlyRankings(
+            departmentId: depId,
+            limit: _limit,
+            offset: reset ? 0 : _offset,
+            ascending: widget.ascending,
+          );
+        }
+        // Client-side filter to ensure department match for department scope
+        if (widget.scope == 'department' && _myDepartmentId != null) {
+          page = page.where((e) => e.departmentId == _myDepartmentId).toList();
+        }
+      }
+
+      setState(() {
+        if (reset) {
+          _allEntries = page;
+        } else {
+          _allEntries.addAll(page);
+        }
+        _offset += page.length;
+        _hasMore = page.length == _limit;
+      });
+      _applyFilters();
+    } catch (e) {
+      print('Error fetching rankings: $e');
+    } finally {
+      if (mounted) setState(() { _loading = false; });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    await _fetchAllRankings(reset: false);
+  }
+
+  void _applyFilters() {
+    List<RankingEntry> filtered = List.from(_allEntries);
+
+    // Apply search filter
+    if (_searchQuery.isNotEmpty) {
+      filtered = filtered.where((entry) {
+        final name = (entry.fullName ?? entry.userTag ?? '').toLowerCase();
+        return name.contains(_searchQuery);
+      }).toList();
+    }
+
+    // Filter by user's department only for department scope (entries should already be filtered, but double-check)
+    if (widget.scope == 'department' && _myDepartmentId != null) {
+      filtered = filtered.where((entry) {
+        return entry.departmentId == _myDepartmentId;
+      }).toList();
+    }
+
+    setState(() {
+      _filteredEntries = filtered;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('All Rankings'),
+      ),
+      body: Column(
+        children: [
+          // Search Bar
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search by name...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+
+          // Filter Chips
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Period Filter
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    _buildFilterChip(
+                      label: 'Today',
+                      selected: _selectedPeriod == 'daily',
+                      onSelected: (selected) {
+                        if (selected) {
+                          setState(() {
+                            _selectedPeriod = 'daily';
+                          });
+                          _fetchAllRankings(reset: true);
+                        }
+                      },
+                    ),
+                    _buildFilterChip(
+                      label: 'Weekly',
+                      selected: _selectedPeriod == 'weekly',
+                      onSelected: (selected) {
+                        if (selected) {
+                          setState(() {
+                            _selectedPeriod = 'weekly';
+                          });
+                          _fetchAllRankings(reset: true);
+                        }
+                      },
+                    ),
+                    _buildFilterChip(
+                      label: 'Monthly',
+                      selected: _selectedPeriod == 'monthly',
+                      onSelected: (selected) {
+                        if (selected) {
+                          setState(() {
+                            _selectedPeriod = 'monthly';
+                          });
+                          _fetchAllRankings(reset: true);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+
+                // Department filter removed - always showing only user's department
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          // Rankings List
+          Expanded(
+            child: (widget.scope == 'department' && _myDepartmentId == null)
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'No department assigned to your profile. Rankings unavailable.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ),
+                  )
+                : _loading && _allEntries.isEmpty
+                    ? const Center(child: CircularProgressIndicator())
+                    : _filteredEntries.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Text(
+                                _searchQuery.isNotEmpty
+                                    ? 'No results found'
+                                    : 'No rankings available',
+                                style: Theme.of(context).textTheme.bodyLarge,
+                              ),
+                            ),
+                          )
+                    : RefreshIndicator(
+                        onRefresh: () => _fetchAllRankings(reset: true),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          physics: const ClampingScrollPhysics(),
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _filteredEntries.length + (_hasMore ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (index >= _filteredEntries.length) {
+                              if (!_loading) {
+                                _loadMore();
+                              }
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(child: CircularProgressIndicator()),
+                              );
+                            }
+                            final entry = _filteredEntries[index];
+                            // Calculate rank based on original position in sorted list
+                            final rank = _allEntries.indexWhere((e) => e.userId == entry.userId) + 1;
+                            return _RankingTile(
+                              rank: rank > 0 ? rank : index + 1,
+                              name: entry.fullName ?? entry.userTag ?? 'Unknown',
+                              you: entry.userId == SupabaseService().currentUserId,
+                              minutes: entry.valueMinutes,
+                              department: entry.departmentName,
+                            );
+                          },
+                        ),
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required bool selected,
+    required ValueChanged<bool> onSelected,
+  }) {
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: onSelected,
+      selectedColor: Theme.of(context).colorScheme.primaryContainer,
+      checkmarkColor: Theme.of(context).colorScheme.onPrimaryContainer,
     );
   }
 }
