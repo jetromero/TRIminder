@@ -196,7 +196,7 @@ class _SignupScreenState extends State<SignupScreen> {
   void _showEmailConfirmationDialog(String email) {
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Row(
@@ -218,26 +218,24 @@ class _SignupScreenState extends State<SignupScreen> {
                 child: Text(email, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.blue.shade800)),
               ),
               SizedBox(height: 16),
-              Text('Please check your email and click the confirmation link to complete your registration.', style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
+              Text('Click the confirmation link in your email to verify your account. You\'ll be automatically redirected to the login screen.', style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
               SizedBox(height: 12),
               Text('Didn\'t receive the email? Check your spam folder or resend it.', style: TextStyle(fontSize: 14, color: Colors.orange.shade700)),
             ],
           ),
           actions: [
             TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Close', style: TextStyle(color: Colors.grey.shade700)),
+            ),
+            TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();
                 await _resendConfirmation(email);
               },
-              child: Text('Resend Email', style: TextStyle(color: Colors.blue.shade700)),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop(); // Go back to login
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
-              child: Text('Go to Login'),
+              child: Text('Resend Email', style: TextStyle(color: Colors.blue.shade700, fontWeight: FontWeight.w600)),
             ),
           ],
         );

@@ -206,10 +206,13 @@ class SupabaseService {
 
     try {
       print('Starting signup for: ${InputValidator.hashForLogging(email)}');
+      const redirectUrl = 'triminder://auth-callback';
+      print('📧 Email confirmation will redirect to: $redirectUrl');
 
       final response = await _client.auth.signUp(
         email: sanitizedEmail,
         password: password,
+        emailRedirectTo: redirectUrl,
         data: {
           'full_name': sanitizedName,
           'department': sanitizedDepartment,
