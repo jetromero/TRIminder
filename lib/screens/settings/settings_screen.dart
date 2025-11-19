@@ -3,8 +3,11 @@ import '../../widgets/permission_status_widget.dart';
 import '../../utils/responsive_utils.dart';
 import '../../services/supabase_service.dart';
 import '../../services/user_session_manager.dart';
+import '../../services/database_service.dart';
 import '../../models/user_models.dart';
+import '../../widgets/profile/avatar_widget.dart';
 import '../auth/login_screen.dart';
+import '../profile/student_profile_screen.dart';
 import '../../config/app_config.dart';
 import '../../widgets/app_scaffold.dart';
 
@@ -672,21 +675,8 @@ class _AppDrawer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DrawerHeader(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-              ),
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  'TRIminder',
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ),
-            ),
+            // Profile header section (matching home screen drawer)
+            _buildProfileHeader(context),
             _buildNavItem(
               context: context,
               icon: Icons.dashboard,
@@ -719,18 +709,8 @@ class _AppDrawer extends StatelessWidget {
             ),
             _buildNavItem(
               context: context,
-              icon: Icons.person,
-              title: 'Profile',
-              index: 2,
-              onTap: () {
-                Navigator.of(context).pop();
-                onSelectTab(2);
-              },
-            ),
-            _buildNavItem(
-              context: context,
               icon: Icons.settings,
-              title: 'Settings',
+              title: 'Account Settings',
               index: 200,
               onTap: () {
                 Navigator.of(context).pop();
@@ -785,6 +765,196 @@ class _AppDrawer extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// Build profile header at top of drawer (matching home screen drawer)
+  Widget _buildProfileHeader(BuildContext context) {
+    return FutureBuilder<UserProfile?>(
+      future: _loadCurrentUserProfileOptimized(),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        
+        // Calculate XP progress
+        int? level;
+        double? progress;
+        Map<String, int>? levelProgress;
+        
+        if (profile != null) {
+          level = profile.level;
+          progress = profile.progressToNextLevel;
+          levelProgress = profile.currentLevelProgress;
+        }
+        
+        final currentLevel = level ?? 1;
+        final currentProgress = (progress ?? 0.0).clamp(0.0, 1.0);
+        final xpInCurrentLevel = levelProgress?['currentLevelXP'] ?? 0;
+        final xpNeededForNextLevel = levelProgress?['requiredForNextLevel'] ?? 100;
+        
+        return InkWell(
+          onTap: () {
+            Navigator.of(context).pop();
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const StudentProfileScreen(),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+              border: Border(
+                bottom: BorderSide(
+                  color: Theme.of(context).dividerColor,
+                  width: 1,
+                ),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    AvatarWidget.medium(
+                      avatarUrl: profile?.avatarUrl,
+                      fullName: profile?.fullName,
+                      size: 56.0,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            profile?.fullName ?? 'Loading...',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (profile?.userTag != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '@${profile!.userTag}',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Level and XP progress
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Level $currentLevel',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: currentProgress,
+                              minHeight: 6,
+                              backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Load current user profile for drawer header (optimized version)
+  Future<UserProfile?> _loadCurrentUserProfileOptimized() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return null;
+      
+      final db = DatabaseService();
+      
+      // STEP 1: Load from local DB first (fast, instant, works offline)
+      final localProfile = await db.getUserProfile(userId);
+      
+      // STEP 2: If online and avatarUrl is missing/null/empty, fetch from cloud in background
+      final supabaseService = SupabaseService();
+      final isConnected = await supabaseService.isConnected();
+      
+      if (isConnected && (localProfile == null || localProfile.avatarUrl == null || localProfile.avatarUrl!.isEmpty)) {
+        // Fetch from cloud in background (non-blocking)
+        try {
+          final cloudProfile = await supabaseService.getUserProfile(userId);
+          if (cloudProfile != null) {
+            // Cache cloud profile locally for offline access
+            await db.insertUserProfile(cloudProfile);
+            return cloudProfile; // Return updated profile with avatar
+          }
+        } catch (e) {
+          print('Supabase profile fetch failed, using local: $e');
+          // Continue with local profile if cloud fetch fails
+        }
+      }
+      
+      // Return local profile (either found in step 1, or cloud fetch failed/not needed)
+      return localProfile;
+    } catch (e) {
+      print('Error loading current user profile: $e');
+      // Last resort: try local DB even if there was an error
+      try {
+        final userId = SupabaseService().currentUserId;
+        if (userId != null) {
+          return await DatabaseService().getUserProfile(userId);
+        }
+      } catch (_) {
+        // Ignore errors in fallback
+      }
+      return null;
+    }
   }
 
   Widget _buildNavItem({

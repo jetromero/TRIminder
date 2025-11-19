@@ -90,7 +90,7 @@ class LevelCalculator {
     final currentLevel = getLevel(currentXP);
     final currentLevelBaseXP = getTotalXPForLevel(currentLevel);
     final xpInCurrentLevel = currentXP - currentLevelBaseXP;
-    final xpNeededForNextLevel = getXPRequiredForLevel(currentLevel + 1);
+    final xpNeededForNextLevel = getXPRequiredForLevel(currentLevel);
     
     return xpNeededForNextLevel - xpInCurrentLevel;
   }
@@ -109,7 +109,7 @@ class LevelCalculator {
     final currentLevel = getLevel(currentXP);
     final currentLevelBaseXP = getTotalXPForLevel(currentLevel);
     final xpInCurrentLevel = currentXP - currentLevelBaseXP;
-    final xpNeededForNextLevel = getXPRequiredForLevel(currentLevel + 1);
+    final xpNeededForNextLevel = getXPRequiredForLevel(currentLevel);
     final xpRemaining = xpNeededForNextLevel - xpInCurrentLevel;
 
     return {
