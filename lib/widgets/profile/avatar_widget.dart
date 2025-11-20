@@ -9,6 +9,7 @@ class AvatarWidget extends StatelessWidget {
   final double size;
   final VoidCallback? onTap;
   final Color? backgroundColor;
+  final bool forceRefresh; // Add cache-busting parameter
 
   const AvatarWidget({
     super.key,
@@ -17,6 +18,7 @@ class AvatarWidget extends StatelessWidget {
     this.size = 40.0,
     this.onTap,
     this.backgroundColor,
+    this.forceRefresh = false,
   });
 
   /// Small avatar (40x40) for rankings
@@ -27,6 +29,7 @@ class AvatarWidget extends StatelessWidget {
     this.size = 40.0,
     this.onTap,
     this.backgroundColor,
+    this.forceRefresh = false,
   });
 
   /// Medium avatar (80x80) for profile headers
@@ -37,6 +40,7 @@ class AvatarWidget extends StatelessWidget {
     this.size = 80.0,
     this.onTap,
     this.backgroundColor,
+    this.forceRefresh = false,
   });
 
   /// Large avatar (120x120) for profile pages
@@ -47,6 +51,7 @@ class AvatarWidget extends StatelessWidget {
     this.size = 120.0,
     this.onTap,
     this.backgroundColor,
+    this.forceRefresh = false,
   });
 
   String _getInitials(String? name) {
@@ -93,21 +98,52 @@ class AvatarWidget extends StatelessWidget {
       ),
       child: avatarUrl != null && avatarUrl!.isNotEmpty
           ? ClipOval(
-              child: CachedNetworkImage(
-                imageUrl: avatarUrl!,
-                width: size,
-                height: size,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                  ),
-                ),
-                errorWidget: (context, url, error) => _buildInitialsWidget(),
-                // Cache images to disk for offline access
-                cacheKey: avatarUrl!,
-                maxWidthDiskCache: (size * 2).toInt(), // Cache at 2x resolution for better quality
-                maxHeightDiskCache: (size * 2).toInt(),
+              child: Builder(
+                builder: (context) {
+                  // Clear cache if forceRefresh is true
+                  if (forceRefresh) {
+                    final baseUrl = avatarUrl!.split('?').first;
+                    // Clear cache asynchronously without blocking UI
+                    CachedNetworkImage.evictFromCache(baseUrl);
+                    // Use NetworkImage directly when forcing refresh to bypass cache
+                    return Image.network(
+                      '$baseUrl?t=${DateTime.now().millisecondsSinceEpoch}',
+                      width: size,
+                      height: size,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return Center(
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: loadingProgress.expectedTotalBytes != null
+                                ? loadingProgress.cumulativeBytesLoaded /
+                                    loadingProgress.expectedTotalBytes!
+                                : null,
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) => _buildInitialsWidget(),
+                    );
+                  }
+                  // Normal cached loading
+                  return CachedNetworkImage(
+                    imageUrl: avatarUrl!,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.cover,
+                    placeholder: (context, url) => Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                      ),
+                    ),
+                    errorWidget: (context, url, error) => _buildInitialsWidget(),
+                    // Cache images to disk for offline access
+                    cacheKey: avatarUrl!.split('?').first,
+                    maxWidthDiskCache: (size * 2).toInt(), // Cache at 2x resolution for better quality
+                    maxHeightDiskCache: (size * 2).toInt(),
+                  );
+                },
               ),
             )
           : _buildInitialsWidget(),

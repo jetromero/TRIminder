@@ -391,7 +391,19 @@ class SupabaseService {
           .single()
           .timeout(Duration(seconds: 5));
 
-      return UserProfile.fromJson(response);
+      final updatedProfile = UserProfile.fromJson(response);
+      
+      // Update local database after successful Supabase update
+      try {
+        final db = DatabaseService();
+        await db.updateUserProfile(updatedProfile);
+        print('✅ Profile updated in local database');
+      } catch (e) {
+        print('⚠️ Failed to update local database after profile update: $e');
+        // Don't fail the entire operation if local update fails
+      }
+      
+      return updatedProfile;
     } catch (e) {
       final errorMsg = e.toString().toLowerCase();
       if (errorMsg.contains('column') && errorMsg.contains('does not exist')) {
@@ -568,20 +580,28 @@ class SupabaseService {
       final available = await isUserTagAvailable(newTag);
       if (!available) return false;
       final String uid = currentUserId!;
+      
+      // Update in Supabase
       await _client
           .from('profiles')
           .update({'user_tag': newTag.trim()})
           .eq('id', uid)
           .select('id')
           .single();
-      // Also update local database copy for offline consistency
+      
+      // Fetch updated profile and update local database
       try {
-        final db = DatabaseService();
-        final local = await db.getUserProfile(uid);
-        if (local != null) {
-          await db.updateUserProfile(local.copyWith(userTag: newTag.trim()));
+        final updatedProfile = await getUserProfile(uid);
+        if (updatedProfile != null) {
+          final db = DatabaseService();
+          await db.updateUserProfile(updatedProfile);
+          print('✅ User tag updated in local database');
         }
-      } catch (_) {}
+      } catch (e) {
+        print('⚠️ Failed to update local database after tag update: $e');
+        // Still return true since Supabase update succeeded
+      }
+      
       return true;
     } catch (e) {
       print('Error updating user tag: $e');

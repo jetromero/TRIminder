@@ -30,6 +30,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
   bool _isLoading = true;
   bool _isOwnProfile = false;
   bool _isOffline = false;
+  int _avatarRefreshKey = 0; // Key to force avatar refresh
 
   @override
   void initState() {
@@ -333,9 +334,20 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
               builder: (context) => const EditProfileScreen(),
             ),
           );
-          if (result == true) {
-            _loadProfile(); // Reload profile after editing
-          }
+                if (result == true) {
+                  // Increment refresh key to force avatar refresh
+                  setState(() {
+                    _avatarRefreshKey++;
+                  });
+                  // Force reload profile and clear image cache
+                  await _loadProfile();
+                  // Force rebuild to refresh images
+                  if (mounted) {
+                    setState(() {
+                      _avatarRefreshKey++; // Increment again after reload
+                    });
+                  }
+                }
         },
         icon: const Icon(Icons.edit),
         label: const Text('Edit Profile'),
@@ -533,7 +545,8 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             color: Theme.of(context).colorScheme.surfaceVariant,
             image: _profile!.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty
                 ? DecorationImage(
-                    image: NetworkImage(_profile!.coverPhotoUrl!),
+                    // Add cache-busting query parameter to force refresh
+                    image: NetworkImage('${_profile!.coverPhotoUrl!}?t=${DateTime.now().millisecondsSinceEpoch}'),
                     fit: BoxFit.cover,
                   )
                 : null,
@@ -562,7 +575,18 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                   ),
                 );
                 if (result == true) {
-                  _loadProfile();
+                  // Increment refresh key to force avatar refresh
+                  setState(() {
+                    _avatarRefreshKey++;
+                  });
+                  // Force reload profile and clear image cache
+                  await _loadProfile();
+                  // Force rebuild to refresh images
+                  if (mounted) {
+                    setState(() {
+                      _avatarRefreshKey++; // Increment again after reload
+                    });
+                  }
                 }
               },
               style: IconButton.styleFrom(
@@ -587,6 +611,8 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             child: AvatarWidget.large(
               avatarUrl: _profile!.avatarUrl,
               fullName: _profile!.fullName,
+              forceRefresh: _avatarRefreshKey > 0, // Force refresh after edit
+              key: ValueKey('avatar_${_profile!.id}_$_avatarRefreshKey'), // Force widget rebuild with unique key
             ),
           ),
           const SizedBox(width: 16),
@@ -836,7 +862,18 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                         ),
                       );
                       if (result == true) {
-                        _loadProfile();
+                        // Increment refresh key to force avatar refresh
+                        setState(() {
+                          _avatarRefreshKey++;
+                        });
+                        // Force reload profile and clear image cache
+                        await _loadProfile();
+                        // Force rebuild to refresh images
+                        if (mounted) {
+                          setState(() {
+                            _avatarRefreshKey++; // Increment again after reload
+                          });
+                        }
                       }
                     },
                   ),

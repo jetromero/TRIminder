@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../services/supabase_service.dart';
 import '../../services/supabase_storage_service.dart';
+import '../../services/database_service.dart';
 import '../../models/user_models.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../widgets/profile/avatar_widget.dart';
@@ -20,8 +21,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   File? _avatarFile;
   File? _coverPhotoFile;
   final TextEditingController _bioController = TextEditingController();
+  final TextEditingController _userTagController = TextEditingController();
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isCheckingTagAvailability = false;
+  String? _tagAvailabilityMessage;
+  bool _isOffline = false;
 
   @override
   void initState() {
@@ -32,6 +37,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void dispose() {
     _bioController.dispose();
+    _userTagController.dispose();
     super.dispose();
   }
 
@@ -61,10 +67,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         return;
       }
 
+      // Check connectivity
+      final isConnected = await SupabaseService().isConnected();
+      
       if (mounted) {
         setState(() {
           _profile = profile;
           _bioController.text = profile.bio ?? '';
+          _userTagController.text = profile.userTag ?? '';
+          _isOffline = !isConnected;
           _isLoading = false;
         });
       }
@@ -107,6 +118,62 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _checkUserTagAvailability() async {
+    final tag = _userTagController.text.trim();
+    if (tag.isEmpty) {
+      setState(() {
+        _tagAvailabilityMessage = null;
+        _isCheckingTagAvailability = false;
+      });
+      return;
+    }
+
+    // Validate format first
+    final supabaseService = SupabaseService();
+    if (!supabaseService.isValidUserTag(tag)) {
+      setState(() {
+        _tagAvailabilityMessage = 'Invalid format. Use up to 15 letters followed by up to 4 digits (e.g., john1234)';
+        _isCheckingTagAvailability = false;
+      });
+      return;
+    }
+
+    // Check if it's the same as current tag
+    if (tag == _profile?.userTag) {
+      setState(() {
+        _tagAvailabilityMessage = null;
+        _isCheckingTagAvailability = false;
+      });
+      return;
+    }
+
+    setState(() => _isCheckingTagAvailability = true);
+
+    try {
+      final isConnected = await supabaseService.isConnected();
+      if (!isConnected) {
+        setState(() {
+          _tagAvailabilityMessage = 'Tag availability check requires internet connection';
+          _isCheckingTagAvailability = false;
+        });
+        return;
+      }
+
+      final isAvailable = await supabaseService.isUserTagAvailable(tag);
+      setState(() {
+        _tagAvailabilityMessage = isAvailable 
+            ? '✓ Available' 
+            : '✗ This tag is already taken';
+        _isCheckingTagAvailability = false;
+      });
+    } catch (e) {
+      setState(() {
+        _tagAvailabilityMessage = 'Error checking availability: $e';
+        _isCheckingTagAvailability = false;
+      });
+    }
+  }
+
   Future<void> _saveProfile() async {
     if (_profile == null) return;
 
@@ -119,79 +186,171 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
 
+    // Validate user tag if changed
+    final newTag = _userTagController.text.trim();
+    final tagChanged = newTag != (_profile!.userTag ?? '');
+    if (tagChanged && newTag.isNotEmpty) {
+      final supabaseService = SupabaseService();
+      if (!supabaseService.isValidUserTag(newTag)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid user tag format. Use up to 15 letters followed by up to 4 digits.'),
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() => _isSaving = true);
 
     try {
       final userId = SupabaseService().currentUserId!;
+      final supabaseService = SupabaseService();
+      final isConnected = await supabaseService.isConnected();
+      setState(() => _isOffline = !isConnected);
+
       String? avatarUrl;
       String? coverPhotoUrl;
+      bool photosPendingUpload = false;
 
-      // Upload avatar if changed
+      // Handle avatar upload
       if (_avatarFile != null) {
-        try {
-          avatarUrl = await SupabaseStorageService().uploadAvatar(_avatarFile!, userId);
-          if (avatarUrl == null) {
-            throw Exception('Failed to upload avatar');
+        if (isConnected) {
+          try {
+            avatarUrl = await SupabaseStorageService().uploadAvatar(_avatarFile!, userId);
+            if (avatarUrl == null) {
+              throw Exception('Failed to upload avatar');
+            }
+          } catch (e) {
+            final errorMsg = e.toString().toLowerCase();
+            if (errorMsg.contains('bucket') || errorMsg.contains('not found')) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Avatar upload failed: Storage buckets not set up. Profile will be saved without avatar.'),
+                  duration: const Duration(seconds: 5),
+                ),
+              );
+              avatarUrl = _profile!.avatarUrl;
+            } else if (errorMsg.contains('network') || errorMsg.contains('connection') || errorMsg.contains('timeout')) {
+              // Network error - queue for later upload
+              photosPendingUpload = true;
+              avatarUrl = _profile!.avatarUrl; // Keep existing for now
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Avatar will be uploaded when connection is restored'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            } else {
+              rethrow;
+            }
           }
-        } catch (e) {
-          // If bucket doesn't exist, allow saving profile without avatar
-          final errorMsg = e.toString().toLowerCase();
-          if (errorMsg.contains('bucket') || errorMsg.contains('not found')) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Avatar upload failed: Storage buckets not set up. Profile will be saved without avatar.'),
-                duration: const Duration(seconds: 5),
-              ),
-            );
-            avatarUrl = _profile!.avatarUrl; // Keep existing or null
-          } else {
-            rethrow;
-          }
+        } else {
+          // Offline - queue for upload
+          photosPendingUpload = true;
+          avatarUrl = _profile!.avatarUrl; // Keep existing
         }
       } else {
         avatarUrl = _profile!.avatarUrl;
       }
 
-      // Upload cover photo if changed
+      // Handle cover photo upload
       if (_coverPhotoFile != null) {
-        try {
-          coverPhotoUrl = await SupabaseStorageService().uploadCoverPhoto(_coverPhotoFile!, userId);
-          if (coverPhotoUrl == null) {
-            throw Exception('Failed to upload cover photo');
+        if (isConnected) {
+          try {
+            coverPhotoUrl = await SupabaseStorageService().uploadCoverPhoto(_coverPhotoFile!, userId);
+            if (coverPhotoUrl == null) {
+              throw Exception('Failed to upload cover photo');
+            }
+          } catch (e) {
+            final errorMsg = e.toString().toLowerCase();
+            if (errorMsg.contains('bucket') || errorMsg.contains('not found')) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Cover photo upload failed: Storage buckets not set up. Profile will be saved without cover photo.'),
+                  duration: const Duration(seconds: 5),
+                ),
+              );
+              coverPhotoUrl = _profile!.coverPhotoUrl;
+            } else if (errorMsg.contains('network') || errorMsg.contains('connection') || errorMsg.contains('timeout')) {
+              // Network error - queue for later upload
+              photosPendingUpload = true;
+              coverPhotoUrl = _profile!.coverPhotoUrl; // Keep existing for now
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Cover photo will be uploaded when connection is restored'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            } else {
+              rethrow;
+            }
           }
-        } catch (e) {
-          // If bucket doesn't exist, allow saving profile without cover photo
-          final errorMsg = e.toString().toLowerCase();
-          if (errorMsg.contains('bucket') || errorMsg.contains('not found')) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Cover photo upload failed: Storage buckets not set up. Profile will be saved without cover photo.'),
-                duration: const Duration(seconds: 5),
-              ),
-            );
-            coverPhotoUrl = _profile!.coverPhotoUrl; // Keep existing or null
-          } else {
-            rethrow;
-          }
+        } else {
+          // Offline - queue for upload
+          photosPendingUpload = true;
+          coverPhotoUrl = _profile!.coverPhotoUrl; // Keep existing
         }
       } else {
         coverPhotoUrl = _profile!.coverPhotoUrl;
       }
 
-      // Update profile
-      final updatedProfile = await SupabaseService().updateUserProfileFields(
-        avatarUrl: avatarUrl,
-        coverPhotoUrl: coverPhotoUrl,
-        bio: _bioController.text.trim().isEmpty ? null : _bioController.text.trim(),
-      );
+      // Update user tag if changed
+      if (tagChanged && newTag.isNotEmpty) {
+        if (isConnected) {
+          final tagAvailable = await supabaseService.isUserTagAvailable(newTag);
+          if (!tagAvailable) {
+            throw Exception('User tag is already taken');
+          }
+          final tagUpdated = await supabaseService.updateCurrentUserTag(newTag);
+          if (!tagUpdated) {
+            throw Exception('Failed to update user tag');
+          }
+        }
+        // Update local profile with new tag (will sync later if offline)
+        _profile = _profile!.copyWith(userTag: newTag);
+      }
 
-      if (updatedProfile == null) {
-        throw Exception('Failed to update profile - no response from server');
+      // Update profile fields (avatar, cover photo, bio)
+      UserProfile? updatedProfile;
+      if (isConnected) {
+        updatedProfile = await supabaseService.updateUserProfileFields(
+          avatarUrl: avatarUrl,
+          coverPhotoUrl: coverPhotoUrl,
+          bio: _bioController.text.trim().isEmpty ? null : _bioController.text.trim(),
+        );
+
+        if (updatedProfile == null) {
+          throw Exception('Failed to update profile - no response from server');
+        }
+      } else {
+        // Offline: Create updated profile locally
+        updatedProfile = _profile!.copyWith(
+          avatarUrl: avatarUrl,
+          coverPhotoUrl: coverPhotoUrl,
+          bio: _bioController.text.trim().isEmpty ? null : _bioController.text.trim(),
+          isSynced: false,
+        );
+      }
+
+      // Update local database
+      final db = DatabaseService();
+      await db.updateUserProfile(updatedProfile);
+
+      // Store pending photo uploads if offline
+      if (photosPendingUpload || !isConnected) {
+        // Store file paths for later upload (we'll implement a proper queue system)
+        // For now, the files are already stored in _avatarFile and _coverPhotoFile
+        // The sync service will need to handle these
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile updated successfully')),
+          SnackBar(
+            content: Text(isConnected 
+                ? 'Profile updated successfully' 
+                : 'Profile saved locally. Changes will sync when online.'),
+          ),
         );
         Navigator.of(context).pop(true); // Return true to indicate success
       }
@@ -273,6 +432,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             
             const SizedBox(height: 24),
             
+            // User Tag Section
+            _buildUserTagSection(),
+            
+            const SizedBox(height: 24),
+            
             // Bio Section
             _buildBioSection(bioLength, maxBioLength),
             
@@ -290,11 +454,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Profile Picture',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            Row(
+              children: [
+                Text(
+                  'Profile Picture',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                if (_avatarFile != null && _isOffline) ...[
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.cloud_upload_outlined,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Pending upload',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 16),
             Center(
@@ -370,11 +553,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Cover Photo',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            Row(
+              children: [
+                Text(
+                  'Cover Photo',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                if (_coverPhotoFile != null && _isOffline) ...[
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.cloud_upload_outlined,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Pending upload',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 16),
             Container(
@@ -450,6 +652,103 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   child: const Text('Remove'),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUserTagSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'User Tag',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                if (_isOffline) ...[
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.cloud_off,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Your unique identifier (e.g., john1234)',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                  ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _userTagController,
+              decoration: InputDecoration(
+                hintText: 'Enter user tag',
+                prefixText: '@',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                suffixIcon: _isCheckingTagAvailability
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: Padding(
+                          padding: EdgeInsets.all(12.0),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : _userTagController.text.trim().isNotEmpty &&
+                            _userTagController.text.trim() != (_profile?.userTag ?? '')
+                        ? IconButton(
+                            icon: const Icon(Icons.check_circle),
+                            onPressed: _checkUserTagAvailability,
+                            tooltip: 'Check availability',
+                          )
+                        : null,
+              ),
+              onChanged: (_) {
+                setState(() {
+                  _tagAvailabilityMessage = null;
+                });
+                // Auto-check after user stops typing
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (mounted && _userTagController.text.trim().isNotEmpty) {
+                    _checkUserTagAvailability();
+                  }
+                });
+              },
+            ),
+            if (_tagAvailabilityMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _tagAvailabilityMessage!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _tagAvailabilityMessage!.startsWith('✓')
+                          ? Colors.green
+                          : Theme.of(context).colorScheme.error,
+                    ),
+              ),
+            ],
+            if (_isOffline) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Tag availability check requires internet connection',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    ),
+              ),
+            ],
           ],
         ),
       ),

@@ -268,6 +268,13 @@ class ImprovedSyncService extends ChangeNotifier {
         print('⚠️ XP award history sync failed, but continuing with other sync operations');
       }
 
+      // Step 7c: Sync profile updates (bio, user tag)
+      print('👤 Syncing profile updates...');
+      final profileSyncSuccess = await _syncProfileUpdates();
+      if (!profileSyncSuccess) {
+        print('⚠️ Profile sync failed, but continuing with other sync operations');
+      }
+
       // Step 8: Download and store user profile from Supabase
       print('👤 Downloading user profile from Supabase...');
       try {
@@ -350,7 +357,14 @@ class ImprovedSyncService extends ChangeNotifier {
         print('⚠️ XP sync failed, but continuing with other sync operations');
       }
 
-      // 4) Update user profile (for avatar, cover photo, bio changes)
+      // 4) Sync profile updates (bio, user tag) from local to Supabase
+      print('👤 Syncing profile updates...');
+      final profileSyncSuccess = await _syncProfileUpdates();
+      if (!profileSyncSuccess) {
+        print('⚠️ Profile sync failed, but continuing with other sync operations');
+      }
+
+      // 5) Update user profile from Supabase (download latest changes)
       print('👤 Updating user profile from Supabase...');
       try {
         final userProfile = await supabaseService.getUserProfile(userId);
@@ -586,6 +600,69 @@ class ImprovedSyncService extends ChangeNotifier {
       return false;
     } catch (e) {
       print('❌ Error syncing XP updates: $e');
+      return false;
+    }
+  }
+
+  /// Sync profile updates (bio, user tag) from local DB to Supabase
+  Future<bool> _syncProfileUpdates() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return false;
+
+      final db = DatabaseService();
+      final localProfile = await db.getUserProfile(userId);
+      
+      if (localProfile == null) {
+        print('📊 No local profile found for sync');
+        return true;
+      }
+
+      // Only sync if profile was modified offline (isSynced = false)
+      if (localProfile.isSynced) {
+        print('📊 Profile already synced, skipping');
+        return true;
+      }
+
+      final supabaseService = SupabaseService();
+      
+      // Update bio if changed
+      if (localProfile.bio != null) {
+        try {
+          await supabaseService.updateUserProfileFields(
+            bio: localProfile.bio,
+          );
+          print('✅ Bio synced to Supabase');
+        } catch (e) {
+          print('⚠️ Bio sync failed: $e');
+        }
+      }
+
+      // Update user tag if changed (only if different from what's in Supabase)
+      if (localProfile.userTag != null && localProfile.userTag!.isNotEmpty) {
+        try {
+          final cloudProfile = await supabaseService.getUserProfile(userId);
+          if (cloudProfile != null && cloudProfile.userTag != localProfile.userTag) {
+            final tagUpdated = await supabaseService.updateCurrentUserTag(localProfile.userTag!);
+            if (tagUpdated) {
+              print('✅ User tag synced to Supabase');
+            } else {
+              print('⚠️ User tag sync failed (may be unavailable)');
+            }
+          }
+        } catch (e) {
+          print('⚠️ User tag sync failed: $e');
+        }
+      }
+
+      // Mark profile as synced
+      final syncedProfile = localProfile.copyWith(isSynced: true);
+      await db.updateUserProfile(syncedProfile);
+      
+      print('✅ Profile updates synced');
+      return true;
+    } catch (e) {
+      print('❌ Error syncing profile updates: $e');
       return false;
     }
   }
