@@ -103,11 +103,12 @@ class AvatarWidget extends StatelessWidget {
                   // Clear cache if forceRefresh is true
                   if (forceRefresh) {
                     final baseUrl = avatarUrl!.split('?').first;
-                    // Clear cache asynchronously without blocking UI
+                    // Clear cache BEFORE loading new image
                     CachedNetworkImage.evictFromCache(baseUrl);
                     // Use NetworkImage directly when forcing refresh to bypass cache
+                    final timestamp = DateTime.now().millisecondsSinceEpoch;
                     return Image.network(
-                      '$baseUrl?t=${DateTime.now().millisecondsSinceEpoch}',
+                      '$baseUrl?t=$timestamp',
                       width: size,
                       height: size,
                       fit: BoxFit.cover,
@@ -126,9 +127,12 @@ class AvatarWidget extends StatelessWidget {
                       errorBuilder: (context, error, stackTrace) => _buildInitialsWidget(),
                     );
                   }
-                  // Normal cached loading
+                  // Use CachedNetworkImage for offline support and performance
+                  // Add timestamp to force network check when online, but use base URL as cache key
+                  final baseUrl = avatarUrl!.split('?').first;
+                  final timestamp = DateTime.now().millisecondsSinceEpoch;
                   return CachedNetworkImage(
-                    imageUrl: avatarUrl!,
+                    imageUrl: '$baseUrl?t=$timestamp', // Timestamp forces network check
                     width: size,
                     height: size,
                     fit: BoxFit.cover,
@@ -139,7 +143,8 @@ class AvatarWidget extends StatelessWidget {
                     ),
                     errorWidget: (context, url, error) => _buildInitialsWidget(),
                     // Cache images to disk for offline access
-                    cacheKey: avatarUrl!.split('?').first,
+                    // Use base URL as cache key so cache is shared (timestamp doesn't affect caching)
+                    cacheKey: baseUrl,
                     maxWidthDiskCache: (size * 2).toInt(), // Cache at 2x resolution for better quality
                     maxHeightDiskCache: (size * 2).toInt(),
                   );

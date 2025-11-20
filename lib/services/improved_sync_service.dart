@@ -575,8 +575,50 @@ class ImprovedSyncService extends ChangeNotifier {
       final userProfile = await SupabaseService().getUserProfile(userId);
       if (userProfile == null) return false;
 
-      // Calculate total XP to add
-      int totalXPToAdd = unsyncedXPUpdates.fold(0, (sum, update) => sum + update.xpToAdd);
+      // ✅ Layer 2: Safety check - Filter out XPUpdateLog entries that already have XP award history
+      final supabaseService = SupabaseService();
+      final isOnline = await supabaseService.isConnected();
+      final validXPUpdates = <XPUpdateLog>[];
+      int skippedCount = 0;
+
+      for (final xpUpdate in unsyncedXPUpdates) {
+        // Check local XP award history
+        final localHistory = await db.getXPAwardHistoryForDate(userId, xpUpdate.date);
+        
+        // Check Supabase XP award history (if online)
+        bool supabaseAwarded = false;
+        if (isOnline) {
+          try {
+            supabaseAwarded = await supabaseService.checkXPAwardedForDate(userId, xpUpdate.date);
+          } catch (e) {
+            print('⚠️ Error checking Supabase XP award history: $e');
+            // Continue with local check only
+          }
+        }
+        
+        // If XP was already awarded (local OR Supabase), skip this entry
+        if (localHistory != null || supabaseAwarded) {
+          print('⚠️ Skipping XPUpdateLog for ${xpUpdate.date.toString().split(' ')[0]}: XP already awarded (${localHistory != null ? 'local' : ''}${localHistory != null && supabaseAwarded ? ' and ' : ''}${supabaseAwarded ? 'Supabase' : ''})');
+          // Mark as synced without applying (prevents future sync attempts)
+          await db.markXPUpdateAsSynced(xpUpdate.id);
+          skippedCount++;
+          continue;
+        }
+        
+        // No history found - this is a valid XP update
+        validXPUpdates.add(xpUpdate);
+      }
+
+      // If all entries were duplicates, nothing to sync
+      if (validXPUpdates.isEmpty) {
+        if (skippedCount > 0) {
+          print('✅ All $skippedCount XP updates were already awarded, marked as synced');
+        }
+        return true;
+      }
+
+      // Calculate total XP to add from valid entries only
+      int totalXPToAdd = validXPUpdates.fold(0, (sum, update) => sum + update.xpToAdd);
       
       // Update profile with total XP
       final updatedProfile = userProfile.copyWith(
@@ -589,11 +631,15 @@ class ImprovedSyncService extends ChangeNotifier {
         // ✅ Update local database with new XP
         await db.updateUserProfile(updatedProfile);
         
-        // Mark all XP updates as synced
-        for (final xpUpdate in unsyncedXPUpdates) {
+        // Mark only valid XP updates as synced
+        for (final xpUpdate in validXPUpdates) {
           await db.markXPUpdateAsSynced(xpUpdate.id);
         }
-        print('✅ Synced ${unsyncedXPUpdates.length} XP updates: +$totalXPToAdd XP');
+        if (skippedCount > 0) {
+          print('✅ Synced ${validXPUpdates.length} XP updates: +$totalXPToAdd XP (skipped $skippedCount duplicates)');
+        } else {
+          print('✅ Synced ${validXPUpdates.length} XP updates: +$totalXPToAdd XP');
+        }
         return true;
       }
       

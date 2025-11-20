@@ -338,9 +338,13 @@ class AutomaticScreenTracker extends ChangeNotifier {
               }
               
               SimplifiedLogger.xp('User XP updated online: +$xpToAward (Total: ${updatedProfile.xp})');
+              // ✅ Exit early to prevent XPUpdateLog creation when online award succeeds
+              return;
             } catch (localError) {
               SimplifiedLogger.warning('Supabase updated but local DB failed: $localError');
-              // Still successful since Supabase was updated
+              // Supabase succeeded, local failed - exit early to prevent XPUpdateLog creation
+              // Sync will download correct XP from Supabase later
+              return;
             }
           } else {
             SimplifiedLogger.warning('Failed to update XP in Supabase, storing locally for later sync');

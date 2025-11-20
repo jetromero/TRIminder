@@ -46,3 +46,4 @@ USING (
   user_a_id = auth.uid() OR user_b_id = auth.uid()
 );
 
+

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../auth/login_screen.dart';
 import '../settings/settings_screen.dart';
 import '../../services/supabase_service.dart';
@@ -2759,18 +2760,62 @@ Future<UserProfile?> _loadCurrentUserProfileOptimized() async {
     // STEP 1: Load from local DB first (fast, instant, works offline)
     final localProfile = await db.getUserProfile(userId);
     
-    // STEP 2: If online and avatarUrl is missing/null/empty, fetch from cloud in background
+    // STEP 2: If online, try to fetch from cloud to get latest data
     final supabaseService = SupabaseService();
     final isConnected = await supabaseService.isConnected();
     
-    if (isConnected && (localProfile == null || localProfile.avatarUrl == null || localProfile.avatarUrl!.isEmpty)) {
-      // Fetch from cloud in background (non-blocking)
+    UserProfile? profileToReturn = localProfile;
+    
+    if (isConnected) {
+      // Always try to fetch from cloud to get latest profile data
       try {
         final cloudProfile = await supabaseService.getUserProfile(userId);
-        if (cloudProfile != null) {
-          // Cache cloud profile locally for offline access
+        if (cloudProfile != null && localProfile != null) {
+          // CRITICAL: Prioritize local DB URLs if they differ from Supabase
+          // Local DB has the correct URLs we just uploaded, even if Supabase hasn't propagated yet
+          final bool localHasDifferentAvatar = localProfile.avatarUrl != null && 
+              localProfile.avatarUrl!.isNotEmpty &&
+              localProfile.avatarUrl != cloudProfile.avatarUrl;
+          final bool localHasDifferentCover = localProfile.coverPhotoUrl != null && 
+              localProfile.coverPhotoUrl!.isNotEmpty &&
+              localProfile.coverPhotoUrl != cloudProfile.coverPhotoUrl;
+          
+          // If local DB has different URLs, use local URLs (they're the ones we just uploaded)
+          if (localHasDifferentAvatar || localHasDifferentCover) {
+            print('⚠️ Nav drawer: Using local DB URLs (differ from Supabase)');
+            // Merge: use local URLs but keep other Supabase data
+            profileToReturn = cloudProfile.copyWith(
+              avatarUrl: localHasDifferentAvatar ? localProfile.avatarUrl : cloudProfile.avatarUrl,
+              coverPhotoUrl: localHasDifferentCover ? localProfile.coverPhotoUrl : cloudProfile.coverPhotoUrl,
+            );
+          } else {
+            profileToReturn = cloudProfile;
+          }
+          
+          // Clear avatar cache if URL changed
+          if (localProfile.avatarUrl != null && 
+              localProfile.avatarUrl != profileToReturn.avatarUrl) {
+            try {
+              CachedNetworkImage.evictFromCache(localProfile.avatarUrl!.split('?').first);
+            } catch (e) {
+              print('Error clearing old avatar cache in nav drawer: $e');
+            }
+          }
+          // Clear new avatar cache to ensure fresh image
+          if (profileToReturn.avatarUrl != null && profileToReturn.avatarUrl!.isNotEmpty) {
+            try {
+              CachedNetworkImage.evictFromCache(profileToReturn.avatarUrl!.split('?').first);
+            } catch (e) {
+              print('Error clearing new avatar cache in nav drawer: $e');
+            }
+          }
+          
+          // Cache the merged profile locally for offline access
+          await db.insertUserProfile(profileToReturn);
+        } else if (cloudProfile != null) {
+          // No local profile, use cloud profile
+          profileToReturn = cloudProfile;
           await db.insertUserProfile(cloudProfile);
-          return cloudProfile; // Return updated profile with avatar
         }
       } catch (e) {
         print('Supabase profile fetch failed, using local: $e');
@@ -2778,8 +2823,8 @@ Future<UserProfile?> _loadCurrentUserProfileOptimized() async {
       }
     }
     
-    // Return local profile (either found in step 1, or cloud fetch failed/not needed)
-    return localProfile;
+    // Return profile (either from cloud or local, with local URLs prioritized)
+    return profileToReturn;
   } catch (e) {
     print('Error loading current user profile: $e');
     // Last resort: try local DB even if there was an error
@@ -3330,7 +3375,7 @@ class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
 }
 
 /// App-wide navigation drawer used across tabs
-class _AppDrawer extends StatelessWidget {
+class _AppDrawer extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
   final int currentScreenIndex;
   
@@ -3338,6 +3383,39 @@ class _AppDrawer extends StatelessWidget {
     required this.onSelectTab,
     this.currentScreenIndex = 0, // Default to Dashboard
   });
+
+  @override
+  State<_AppDrawer> createState() => _AppDrawerState();
+}
+
+class _AppDrawerState extends State<_AppDrawer> {
+  int _profileRefreshKey = 0; // Key to force profile refresh
+  UserProfile? _cachedProfile; // Cache profile to clear old URLs
+  static int _globalRefreshKey = 0; // Global key to force all drawer instances to refresh
+
+  @override
+  void initState() {
+    super.initState();
+    // Sync with global refresh key
+    _profileRefreshKey = _globalRefreshKey;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh when drawer is opened (didChangeDependencies is called when drawer opens)
+    if (_profileRefreshKey != _globalRefreshKey) {
+      _profileRefreshKey = _globalRefreshKey;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  /// Static method to refresh all drawer instances
+  static void refreshAllDrawers() {
+    _globalRefreshKey++;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3351,7 +3429,7 @@ class _AppDrawer extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Profile header section
-            _buildProfileHeader(context),
+            _buildProfileHeader(context, _profileRefreshKey),
             _buildNavItem(
               context: context,
               icon: Icons.dashboard,
@@ -3359,7 +3437,7 @@ class _AppDrawer extends StatelessWidget {
               index: 0,
               onTap: () {
                 Navigator.of(context).pop();
-                onSelectTab(0);
+                widget.onSelectTab(0);
               },
             ),
             _buildNavItem(
@@ -3369,7 +3447,7 @@ class _AppDrawer extends StatelessWidget {
               index: 1,
               onTap: () {
                 Navigator.of(context).pop();
-                onSelectTab(1);
+                widget.onSelectTab(1);
               },
             ),
             _buildNavItem(
@@ -3379,7 +3457,7 @@ class _AppDrawer extends StatelessWidget {
               index: 100,
               onTap: () {
                 Navigator.of(context).pop();
-                onSelectTab(100);
+                widget.onSelectTab(100);
               },
             ),
             _buildNavItem(
@@ -3389,7 +3467,7 @@ class _AppDrawer extends StatelessWidget {
               index: 200,
               onTap: () {
                 Navigator.of(context).pop();
-                onSelectTab(200);
+                widget.onSelectTab(200);
               },
             ),
             const Spacer(),
@@ -3465,11 +3543,39 @@ class _AppDrawer extends StatelessWidget {
 
   /// Build profile header at top of drawer
   /// Shows local profile immediately, then updates from cloud if avatar missing
-  Widget _buildProfileHeader(BuildContext context) {
+  Widget _buildProfileHeader(BuildContext context, int refreshKey) {
+    // IMPORTANT: Call the function directly to create a NEW future each time
+    // The ValueKey ensures widget rebuilds, and calling the function ensures new future
     return FutureBuilder<UserProfile?>(
-      future: _loadCurrentUserProfileOptimized(),
+      future: _loadCurrentUserProfileOptimized(), // New future created each rebuild
+      key: ValueKey('profile_header_$refreshKey'), // Force rebuild when refresh key changes
       builder: (context, snapshot) {
         final profile = snapshot.data;
+        
+        // Clear cache for old profile if URL changed
+        if (profile != null && _cachedProfile != null) {
+          if (_cachedProfile!.avatarUrl != profile.avatarUrl) {
+            // Clear old avatar cache
+            if (_cachedProfile!.avatarUrl != null && _cachedProfile!.avatarUrl!.isNotEmpty) {
+              try {
+                CachedNetworkImage.evictFromCache(_cachedProfile!.avatarUrl!.split('?').first);
+              } catch (e) {
+                print('Error clearing old nav drawer avatar cache: $e');
+              }
+            }
+            // Clear new avatar cache
+            if (profile.avatarUrl != null && profile.avatarUrl!.isNotEmpty) {
+              try {
+                CachedNetworkImage.evictFromCache(profile.avatarUrl!.split('?').first);
+              } catch (e) {
+                print('Error clearing new nav drawer avatar cache: $e');
+              }
+            }
+          }
+          _cachedProfile = profile; // Update cache
+        } else if (profile != null) {
+          _cachedProfile = profile; // First load
+        }
         
         // Calculate XP progress
         int? level;
@@ -3488,14 +3594,62 @@ class _AppDrawer extends StatelessWidget {
         final xpNeededForNextLevel = levelProgress?['requiredForNextLevel'] ?? 100;
         
         return InkWell(
-          onTap: () {
+          onTap: () async {
             Navigator.of(context).pop();
-            Navigator.push(
+            // Store old avatar URL before navigating
+            final oldAvatarUrl = profile?.avatarUrl;
+            final oldCoverPhotoUrl = profile?.coverPhotoUrl;
+            
+            // Wait a bit before navigating to ensure drawer closes
+            await Future.delayed(const Duration(milliseconds: 100));
+            
+            await Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => const StudentProfileScreen(),
               ),
             );
+            
+            // Always refresh profile header when returning from profile screen
+            if (mounted) {
+              // Clear ALL avatar and cover photo caches aggressively
+              try {
+                // Clear old avatar cache
+                if (oldAvatarUrl != null && oldAvatarUrl.isNotEmpty) {
+                  CachedNetworkImage.evictFromCache(oldAvatarUrl.split('?').first);
+                }
+                // Clear old cover photo cache
+                if (oldCoverPhotoUrl != null && oldCoverPhotoUrl.isNotEmpty) {
+                  CachedNetworkImage.evictFromCache(oldCoverPhotoUrl.split('?').first);
+                }
+                // Clear any potential new URLs (clear all user avatar URLs)
+                final userId = SupabaseService().currentUserId;
+                if (userId != null) {
+                  // Clear potential new avatar URL
+                  final potentialNewAvatarUrl = '${SupabaseService().client.storage.from('avatars').getPublicUrl('$userId.jpg')}';
+                  CachedNetworkImage.evictFromCache(potentialNewAvatarUrl.split('?').first);
+                  // Clear potential new cover photo URL
+                  final potentialNewCoverUrl = '${SupabaseService().client.storage.from('cover-photos').getPublicUrl('$userId.jpg')}';
+                  CachedNetworkImage.evictFromCache(potentialNewCoverUrl.split('?').first);
+                }
+              } catch (e) {
+                print('Error clearing nav drawer image cache: $e');
+              }
+              
+              // Wait a bit for Supabase to propagate
+              await Future.delayed(const Duration(milliseconds: 500));
+              
+              // Refresh ALL drawer instances (static method)
+              _AppDrawerState.refreshAllDrawers();
+              
+              // Refresh the profile header to load updated data
+              if (mounted) {
+                setState(() {
+                  _profileRefreshKey = _AppDrawerState._globalRefreshKey;
+                  _cachedProfile = null; // Clear cache to force reload
+                });
+              }
+            }
           },
           child: Container(
             padding: const EdgeInsets.all(16.0),
@@ -3517,6 +3671,8 @@ class _AppDrawer extends StatelessWidget {
                       avatarUrl: profile?.avatarUrl,
                       fullName: profile?.fullName,
                       size: 56.0,
+                      forceRefresh: refreshKey > 0, // Force refresh when key changes
+                      key: ValueKey('nav_avatar_${profile?.id}_$refreshKey'), // Force widget rebuild
                     ),
                     const SizedBox(width: 16),
                     Expanded(
@@ -3604,7 +3760,7 @@ class _AppDrawer extends StatelessWidget {
     required int index,
     required VoidCallback onTap,
   }) {
-    final isSelected = currentScreenIndex == index;
+    final isSelected = widget.currentScreenIndex == index;
     
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

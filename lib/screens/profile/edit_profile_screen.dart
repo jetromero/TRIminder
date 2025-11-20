@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../services/supabase_service.dart';
 import '../../services/supabase_storage_service.dart';
 import '../../services/database_service.dart';
@@ -213,6 +214,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       String? coverPhotoUrl;
       bool photosPendingUpload = false;
 
+      // Clear old URLs cache before upload
+      final oldAvatarUrl = _profile!.avatarUrl;
+      final oldCoverPhotoUrl = _profile!.coverPhotoUrl;
+      try {
+        if (oldAvatarUrl != null && oldAvatarUrl.isNotEmpty) {
+          CachedNetworkImage.evictFromCache(oldAvatarUrl.split('?').first);
+        }
+        if (oldCoverPhotoUrl != null && oldCoverPhotoUrl.isNotEmpty) {
+          CachedNetworkImage.evictFromCache(oldCoverPhotoUrl.split('?').first);
+        }
+      } catch (e) {
+        print('Error clearing old image cache: $e');
+      }
+
       // Handle avatar upload
       if (_avatarFile != null) {
         if (isConnected) {
@@ -220,6 +235,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             avatarUrl = await SupabaseStorageService().uploadAvatar(_avatarFile!, userId);
             if (avatarUrl == null) {
               throw Exception('Failed to upload avatar');
+            }
+            // Clear cache for new avatar URL immediately after upload
+            try {
+              CachedNetworkImage.evictFromCache(avatarUrl.split('?').first);
+            } catch (e) {
+              print('Error clearing new avatar cache: $e');
             }
           } catch (e) {
             final errorMsg = e.toString().toLowerCase();
@@ -261,6 +282,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             coverPhotoUrl = await SupabaseStorageService().uploadCoverPhoto(_coverPhotoFile!, userId);
             if (coverPhotoUrl == null) {
               throw Exception('Failed to upload cover photo');
+            }
+            // Clear cache for new cover photo URL immediately after upload
+            try {
+              CachedNetworkImage.evictFromCache(coverPhotoUrl.split('?').first);
+            } catch (e) {
+              print('Error clearing new cover photo cache: $e');
             }
           } catch (e) {
             final errorMsg = e.toString().toLowerCase();
@@ -314,15 +341,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Update profile fields (avatar, cover photo, bio)
       UserProfile? updatedProfile;
       if (isConnected) {
-        updatedProfile = await supabaseService.updateUserProfileFields(
+        final supabaseResponse = await supabaseService.updateUserProfileFields(
           avatarUrl: avatarUrl,
           coverPhotoUrl: coverPhotoUrl,
           bio: _bioController.text.trim().isEmpty ? null : _bioController.text.trim(),
         );
 
-        if (updatedProfile == null) {
+        if (supabaseResponse == null) {
           throw Exception('Failed to update profile - no response from server');
         }
+        
+        // CRITICAL: Use the URLs we uploaded, not what Supabase returns
+        // Supabase might return stale data if changes haven't propagated yet
+        // We know avatarUrl and coverPhotoUrl are correct because we just uploaded them
+        updatedProfile = supabaseResponse.copyWith(
+          avatarUrl: avatarUrl, // Use the URL we uploaded, not Supabase response
+          coverPhotoUrl: coverPhotoUrl, // Use the URL we uploaded, not Supabase response
+        );
       } else {
         // Offline: Create updated profile locally
         updatedProfile = _profile!.copyWith(
@@ -333,9 +368,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         );
       }
 
-      // Update local database
+      // Update local database with CORRECT URLs (the ones we uploaded)
       final db = DatabaseService();
       await db.updateUserProfile(updatedProfile);
+      
+      // Track when local DB was updated (for preventing stale overwrite)
+      // This timestamp will be used by profile screen to prioritize local DB
+      // We'll store this in a way that profile screen can access it
+      // For now, we'll rely on the profile screen checking the actual URLs
+      
+      // Track when local DB was updated (for preventing stale overwrite in profile screen)
+      // This is done by updating the profile screen's _lastLocalDbUpdate via a callback or state
+      // For now, we'll rely on the timestamp check in _loadProfile()
 
       // Store pending photo uploads if offline
       if (photosPendingUpload || !isConnected) {

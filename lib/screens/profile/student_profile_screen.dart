@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../services/supabase_service.dart';
 import '../../services/database_service.dart';
 import '../../models/user_models.dart';
@@ -31,6 +32,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
   bool _isOwnProfile = false;
   bool _isOffline = false;
   int _avatarRefreshKey = 0; // Key to force avatar refresh
+  int _coverPhotoRefreshKey = 0; // Key to force cover photo refresh
 
   @override
   void initState() {
@@ -108,9 +110,97 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
 
       // Load profile - try Supabase first, fallback to local database
       UserProfile? profile;
+      
+      // Get local profile first to track old URLs
+      final localProfile = await db.getUserProfile(targetUserId ?? '');
+      
       if (isConnected) {
         try {
           profile = await supabaseService.getUserProfileById(targetUserId ?? '');
+          
+          // CRITICAL: Always prioritize local DB URLs if they differ from Supabase
+          // This prevents stale Supabase data from overwriting fresh local data
+          // Local DB has the correct URLs we just uploaded, even if Supabase hasn't propagated yet
+          if (profile != null && localProfile != null) {
+            // Check if local DB has different URLs than Supabase
+            final bool localHasDifferentAvatar = localProfile.avatarUrl != null && 
+                localProfile.avatarUrl!.isNotEmpty &&
+                localProfile.avatarUrl != profile.avatarUrl;
+            final bool localHasDifferentCover = localProfile.coverPhotoUrl != null && 
+                localProfile.coverPhotoUrl!.isNotEmpty &&
+                localProfile.coverPhotoUrl != profile.coverPhotoUrl;
+            
+            // If local DB has different URLs, use local URLs (they're the ones we just uploaded)
+            // This handles the case where Supabase hasn't propagated changes yet
+            if (localHasDifferentAvatar || localHasDifferentCover) {
+              print('⚠️ Using local DB URLs (differ from Supabase - likely just uploaded)');
+              // Merge: use local URLs but keep other Supabase data
+              profile = profile.copyWith(
+                avatarUrl: localHasDifferentAvatar ? localProfile.avatarUrl : profile.avatarUrl,
+                coverPhotoUrl: localHasDifferentCover ? localProfile.coverPhotoUrl : profile.coverPhotoUrl,
+              );
+            }
+          }
+          
+          // Update local database with fresh profile from Supabase to keep it in sync
+          // But only if we're not using local data due to stale Supabase data
+          if (profile != null && profile != localProfile) {
+            try {
+              // Save fresh profile to local database so we have correct data if Supabase fails next time
+              await db.insertUserProfile(profile);
+            } catch (e) {
+              print('Error updating local database: $e');
+              // Don't fail profile load if local update fails
+            }
+          }
+          
+          // Clear cache AFTER fetching new profile data, using NEW URLs
+          // Only clear old URLs if they differ from new URLs
+          if (profile != null && localProfile != null) {
+            try {
+              // Clear old avatar cache if URL changed
+              if (localProfile.avatarUrl != null && 
+                  localProfile.avatarUrl!.isNotEmpty &&
+                  localProfile.avatarUrl != profile.avatarUrl) {
+                final oldAvatarUrl = localProfile.avatarUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(oldAvatarUrl);
+              }
+              // Clear new avatar cache to ensure fresh image
+              if (profile.avatarUrl != null && profile.avatarUrl!.isNotEmpty) {
+                final avatarUrl = profile.avatarUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(avatarUrl);
+              }
+              
+              // Clear old cover photo cache if URL changed
+              if (localProfile.coverPhotoUrl != null && 
+                  localProfile.coverPhotoUrl!.isNotEmpty &&
+                  localProfile.coverPhotoUrl != profile.coverPhotoUrl) {
+                final oldCoverUrl = localProfile.coverPhotoUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(oldCoverUrl);
+              }
+              // Clear new cover photo cache to ensure fresh image
+              if (profile.coverPhotoUrl != null && profile.coverPhotoUrl!.isNotEmpty) {
+                final coverUrl = profile.coverPhotoUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(coverUrl);
+              }
+            } catch (e) {
+              print('Error clearing image cache: $e');
+            }
+          } else if (profile != null) {
+            // No local profile to compare, just clear cache for new URLs
+            try {
+              if (profile.avatarUrl != null && profile.avatarUrl!.isNotEmpty) {
+                final avatarUrl = profile.avatarUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(avatarUrl);
+              }
+              if (profile.coverPhotoUrl != null && profile.coverPhotoUrl!.isNotEmpty) {
+                final coverUrl = profile.coverPhotoUrl!.split('?').first;
+                CachedNetworkImage.evictFromCache(coverUrl);
+              }
+            } catch (e) {
+              print('Error clearing image cache: $e');
+            }
+          }
         } catch (e) {
           print('Supabase profile fetch failed, trying local: $e');
         }
@@ -335,16 +425,20 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             ),
           );
                 if (result == true) {
-                  // Increment refresh key to force avatar refresh
+                  // Increment refresh keys to force image refresh
                   setState(() {
                     _avatarRefreshKey++;
+                    _coverPhotoRefreshKey++;
                   });
+                  // Wait a bit for Supabase to propagate changes
+                  await Future.delayed(const Duration(milliseconds: 500));
                   // Force reload profile and clear image cache
                   await _loadProfile();
                   // Force rebuild to refresh images
                   if (mounted) {
                     setState(() {
                       _avatarRefreshKey++; // Increment again after reload
+                      _coverPhotoRefreshKey++; // Increment again after reload
                     });
                   }
                 }
@@ -447,10 +541,41 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      body: RefreshIndicator(
+        onRefresh: () async {
+          // Clear image cache before reloading
+          try {
+            if (_profile?.avatarUrl != null && _profile!.avatarUrl!.isNotEmpty) {
+              final avatarUrl = _profile!.avatarUrl!.split('?').first;
+              CachedNetworkImage.evictFromCache(avatarUrl);
+            }
+            if (_profile?.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty) {
+              final coverUrl = _profile!.coverPhotoUrl!.split('?').first;
+              CachedNetworkImage.evictFromCache(coverUrl);
+            }
+          } catch (e) {
+            print('Error clearing cache on refresh: $e');
+          }
+          // Increment refresh keys to force image refresh
+          setState(() {
+            _avatarRefreshKey++;
+            _coverPhotoRefreshKey++;
+          });
+          // Reload profile data
+          await _loadProfile();
+          // Force rebuild to refresh images
+          if (mounted) {
+            setState(() {
+              _avatarRefreshKey++;
+              _coverPhotoRefreshKey++;
+            });
+          }
+        },
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(), // Enable pull-to-refresh even when content fits
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             // Cover Photo Section
             _buildCoverPhoto(),
             
@@ -529,7 +654,8 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             ),
             
             const SizedBox(height: 32),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -543,23 +669,92 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           width: double.infinity,
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surfaceVariant,
-            image: _profile!.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty
-                ? DecorationImage(
-                    // Add cache-busting query parameter to force refresh
-                    image: NetworkImage('${_profile!.coverPhotoUrl!}?t=${DateTime.now().millisecondsSinceEpoch}'),
-                    fit: BoxFit.cover,
-                  )
-                : null,
           ),
-          child: _profile!.coverPhotoUrl == null || _profile!.coverPhotoUrl!.isEmpty
-              ? Center(
+          child: _profile!.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty
+              ? Builder(
+                  builder: (context) {
+                    // Force refresh mechanism similar to avatar
+                    if (_coverPhotoRefreshKey > 0) {
+                      final baseUrl = _profile!.coverPhotoUrl!.split('?').first;
+                      // Clear cache BEFORE loading new image
+                      CachedNetworkImage.evictFromCache(baseUrl);
+                      // Use NetworkImage directly when forcing refresh to bypass cache
+                      final timestamp = DateTime.now().millisecondsSinceEpoch;
+                      return Image.network(
+                        '$baseUrl?t=$timestamp',
+                        width: double.infinity,
+                        height: 200,
+                        fit: BoxFit.cover,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Container(
+                            color: Theme.of(context).colorScheme.surfaceVariant,
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                value: loadingProgress.expectedTotalBytes != null
+                                    ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                    : null,
+                              ),
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: Theme.of(context).colorScheme.surfaceVariant,
+                          child: Center(
+                            child: Icon(
+                              Icons.photo_library_outlined,
+                              size: 64,
+                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    // Use CachedNetworkImage for offline support and performance
+                    // Add timestamp to force network check when online, but use base URL as cache key
+                    final baseUrl = _profile!.coverPhotoUrl!.split('?').first;
+                    final timestamp = DateTime.now().millisecondsSinceEpoch;
+                    return CachedNetworkImage(
+                      imageUrl: '$baseUrl?t=$timestamp',
+                      width: double.infinity,
+                      height: 200,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      ),
+                      errorWidget: (context, url, error) => Container(
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        child: Center(
+                          child: Icon(
+                            Icons.photo_library_outlined,
+                            size: 64,
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+                          ),
+                        ),
+                      ),
+                      // Cache images to disk for offline access
+                      // Use base URL as cache key so cache is shared (timestamp doesn't affect caching)
+                      cacheKey: baseUrl,
+                      maxWidthDiskCache: 2400, // Cache at 2x resolution (1200 * 2) for better quality
+                      maxHeightDiskCache: 800, // Cache at 2x resolution (400 * 2) for better quality
+                      key: ValueKey('cover_${_profile!.id}_$_coverPhotoRefreshKey'), // Force widget rebuild with unique key
+                    );
+                  },
+                )
+              : Center(
                   child: Icon(
                     Icons.photo_library_outlined,
                     size: 64,
                     color: Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
                   ),
-                )
-              : null,
+                ),
         ),
         if (_isOwnProfile)
           Positioned(
@@ -575,16 +770,33 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                   ),
                 );
                 if (result == true) {
-                  // Increment refresh key to force avatar refresh
+                  // Clear image cache IMMEDIATELY before reloading
+                  try {
+                    if (_profile?.avatarUrl != null && _profile!.avatarUrl!.isNotEmpty) {
+                      final avatarUrl = _profile!.avatarUrl!.split('?').first;
+                      CachedNetworkImage.evictFromCache(avatarUrl);
+                    }
+                    if (_profile?.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty) {
+                      final coverUrl = _profile!.coverPhotoUrl!.split('?').first;
+                      CachedNetworkImage.evictFromCache(coverUrl);
+                    }
+                  } catch (e) {
+                    print('Error clearing cache: $e');
+                  }
+                  // Increment refresh keys to force image refresh
                   setState(() {
                     _avatarRefreshKey++;
+                    _coverPhotoRefreshKey++;
                   });
-                  // Force reload profile and clear image cache
+                  // Wait a bit for Supabase to propagate changes
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  // Force reload profile
                   await _loadProfile();
                   // Force rebuild to refresh images
                   if (mounted) {
                     setState(() {
                       _avatarRefreshKey++; // Increment again after reload
+                      _coverPhotoRefreshKey++; // Increment again after reload
                     });
                   }
                 }
@@ -862,16 +1074,33 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                         ),
                       );
                       if (result == true) {
-                        // Increment refresh key to force avatar refresh
+                        // Clear image cache IMMEDIATELY before reloading
+                        try {
+                          if (_profile?.avatarUrl != null && _profile!.avatarUrl!.isNotEmpty) {
+                            final avatarUrl = _profile!.avatarUrl!.split('?').first;
+                            CachedNetworkImage.evictFromCache(avatarUrl);
+                          }
+                          if (_profile?.coverPhotoUrl != null && _profile!.coverPhotoUrl!.isNotEmpty) {
+                            final coverUrl = _profile!.coverPhotoUrl!.split('?').first;
+                            CachedNetworkImage.evictFromCache(coverUrl);
+                          }
+                        } catch (e) {
+                          print('Error clearing cache: $e');
+                        }
+                        // Increment refresh keys to force image refresh
                         setState(() {
                           _avatarRefreshKey++;
+                          _coverPhotoRefreshKey++;
                         });
-                        // Force reload profile and clear image cache
+                        // Wait a bit for Supabase to propagate changes
+                        await Future.delayed(const Duration(milliseconds: 500));
+                        // Force reload profile
                         await _loadProfile();
                         // Force rebuild to refresh images
                         if (mounted) {
                           setState(() {
                             _avatarRefreshKey++; // Increment again after reload
+                            _coverPhotoRefreshKey++; // Increment again after reload
                           });
                         }
                       }
