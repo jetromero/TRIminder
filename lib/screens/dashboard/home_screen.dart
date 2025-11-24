@@ -1409,50 +1409,77 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
 
   Widget _buildRankingList() {
     if (_scope == 'department' && _myDepartmentId == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text('No department assigned to your profile. Rankings unavailable.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
+      return RefreshIndicator(
+        onRefresh: () async {
+          await _loadMyDepartment();
+          await _fetchRankings(reset: true, forceCurrentPeriod: true);
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text('No department assigned to your profile. Rankings unavailable.',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
-      ),
-    );
+      );
     }
 
     // Handle empty state for friends scope
     if (_scope == 'friends' && !_loading && _entries.isEmpty) {
       // Show different message based on whether user has friends or not
       final hasFriends = _friendCount > 0;
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                hasFriends ? Icons.analytics_outlined : Icons.people_outline,
-                size: 64,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                hasFriends ? 'No rankings data' : 'No friends yet',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                hasFriends
-                    ? 'Your friends haven\'t tracked any screen time for this period yet.'
-                    : 'Add friends to see rankings!',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+      return RefreshIndicator(
+        onRefresh: () async {
+          await _fetchRankings(reset: true, forceCurrentPeriod: true);
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.6,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        hasFriends ? Icons.analytics_outlined : Icons.people_outline,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        hasFriends ? 'No rankings data' : 'No friends yet',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        hasFriends
+                            ? 'Your friends haven\'t tracked any screen time for this period yet.'
+                            : 'Add friends to see rankings!',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -1463,9 +1490,11 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
     final currentUserId = SupabaseService().currentUserId;
 
     return RefreshIndicator(
-      onRefresh: () async { await _fetchRankings(reset: true); },
+      onRefresh: () async {
+        await _fetchRankings(reset: true, forceCurrentPeriod: true);
+      },
       child: ListView(
-        physics: const ClampingScrollPhysics(),
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
           // Top 3 Podium Section
