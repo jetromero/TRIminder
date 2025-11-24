@@ -4,10 +4,16 @@ class ResponsiveUtils {
   static const double mobileBreakpoint = 600;
   static const double tabletBreakpoint = 900;
   static const double desktopBreakpoint = 1200;
+  static const double verySmallScreenBreakpoint = 360;
 
   // Screen size detection
   static bool isMobile(BuildContext context) {
     return MediaQuery.of(context).size.width < mobileBreakpoint;
+  }
+
+  // Check if very small screen (< 360px)
+  static bool isVerySmallScreen(BuildContext context) {
+    return MediaQuery.of(context).size.width < verySmallScreenBreakpoint;
   }
 
   static bool isTablet(BuildContext context) {
@@ -21,7 +27,9 @@ class ResponsiveUtils {
 
   // Get responsive padding
   static EdgeInsets getScreenPadding(BuildContext context) {
-    if (isMobile(context)) {
+    if (isVerySmallScreen(context)) {
+      return const EdgeInsets.all(12.0); // Smaller padding for very small screens
+    } else if (isMobile(context)) {
       return const EdgeInsets.all(16.0);
     } else if (isTablet(context)) {
       return const EdgeInsets.all(24.0);
@@ -32,7 +40,10 @@ class ResponsiveUtils {
 
   // Get responsive spacing
   static double getSpacing(BuildContext context, {double mobile = 16.0, double tablet = 20.0, double desktop = 24.0}) {
-    if (isMobile(context)) {
+    if (isVerySmallScreen(context)) {
+      // Reduce spacing for very small screens
+      return mobile * 0.75;
+    } else if (isMobile(context)) {
       return mobile;
     } else if (isTablet(context)) {
       return tablet;
@@ -43,13 +54,25 @@ class ResponsiveUtils {
 
   // Get responsive font scale
   static double getFontScale(BuildContext context) {
-    if (isMobile(context)) {
+    if (isVerySmallScreen(context)) {
+      return 0.85; // Smaller font for very small screens
+    } else if (isMobile(context)) {
       return 1.0;
     } else if (isTablet(context)) {
       return 1.1;
     } else {
       return 1.2;
     }
+  }
+
+  // Get font scale specifically for very small screens
+  static double getSmallScreenFontScale(BuildContext context) {
+    if (isVerySmallScreen(context)) {
+      return 0.85;
+    } else if (MediaQuery.of(context).size.width < 400) {
+      return 0.9;
+    }
+    return 1.0;
   }
 
   // Get responsive card padding
