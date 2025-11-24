@@ -7,6 +7,7 @@ import '../../services/evsu_email_service.dart';
 import '../../services/user_session_manager.dart';
 import '../../utils/responsive_utils.dart';
 import '../../utils/auth_error_handler.dart';
+import '../../utils/input_validator.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -17,15 +18,21 @@ class SignupScreen extends StatefulWidget {
 
 class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _studentIdController = TextEditingController();
+  final _dateOfBirthController = TextEditingController();
   
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String? _selectedDepartment;
+  String? _selectedGender;
+  String? _selectedYearLevel;
+  DateTime? _selectedDateOfBirth;
   bool _isValidatingEmail = false;
 
   // List of EVSU departments (matching your Supabase database)
@@ -37,12 +44,31 @@ class _SignupScreenState extends State<SignupScreen> {
     'Industrial Technology',
   ];
 
+  // Gender options
+  final List<String> _genders = [
+    'Male',
+    'Female',
+    'Other',
+    'Prefer not to say',
+  ];
+
+  // Year level options
+  final List<String> _yearLevels = [
+    '1st Year',
+    '2nd Year',
+    '3rd Year',
+    '4th Year',
+  ];
+
   @override
   void dispose() {
-    _usernameController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _studentIdController.dispose();
+    _dateOfBirthController.dispose();
     super.dispose();
   }
 
@@ -77,6 +103,26 @@ class _SignupScreenState extends State<SignupScreen> {
     }
   }
 
+  Future<void> _selectDateOfBirth() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDateOfBirth ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365 * 100)),
+      lastDate: DateTime.now(),
+      helpText: 'Select Date of Birth',
+    );
+    
+    if (picked != null) {
+      setState(() {
+        _selectedDateOfBirth = picked;
+        // Format date for display
+        final months = ['January', 'February', 'March', 'April', 'May', 'June',
+          'July', 'August', 'September', 'October', 'November', 'December'];
+        _dateOfBirthController.text = '${months[picked.month - 1]} ${picked.day}, ${picked.year}';
+      });
+    }
+  }
+
   Future<void> _signup() async {
     if (!_formKey.currentState!.validate()) return;
     
@@ -84,6 +130,36 @@ class _SignupScreenState extends State<SignupScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select your department'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedGender == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select your gender'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedYearLevel == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select your year level'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_selectedDateOfBirth == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select your date of birth'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -113,8 +189,13 @@ class _SignupScreenState extends State<SignupScreen> {
       final response = await SupabaseService().signUpWithEmailPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
-        fullName: _usernameController.text.trim(),
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
         department: _selectedDepartment!,
+        studentId: _studentIdController.text.trim(),
+        gender: _selectedGender!,
+        yearLevel: _selectedYearLevel!,
+        dateOfBirth: _selectedDateOfBirth!,
       );
 
       if (mounted) {
@@ -371,21 +452,56 @@ class _SignupScreenState extends State<SignupScreen> {
                 ),
                 SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 32, tablet: 40, desktop: 48)),
 
-                // Full Name Field
+                // First Name Field
                 TextFormField(
-                  controller: _usernameController,
+                  controller: _firstNameController,
                   decoration: const InputDecoration(
-                    labelText: 'Full Name',
+                    labelText: 'First Name',
                     prefixIcon: Icon(Icons.person_outlined),
                     border: OutlineInputBorder(),
-                    helperText: 'Your full name as it appears on school records',
+                    helperText: 'Your first name',
                   ),
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your full name';
+                      return 'Please enter your first name';
                     }
-                    if (value.trim().length < 3) {
-                      return 'Full name must be at least 3 characters';
+                    final error = InputValidator.validateName(value.trim());
+                    if (error != null) {
+                      return error;
+                    }
+                    if (value.trim().length < 2) {
+                      return 'First name must be at least 2 characters';
+                    }
+                    if (value.trim().length > 50) {
+                      return 'First name must be 50 characters or less';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
+                // Last Name Field
+                TextFormField(
+                  controller: _lastNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Last Name',
+                    prefixIcon: Icon(Icons.person_outlined),
+                    border: OutlineInputBorder(),
+                    helperText: 'Your last name',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please enter your last name';
+                    }
+                    final error = InputValidator.validateName(value.trim());
+                    if (error != null) {
+                      return error;
+                    }
+                    if (value.trim().length < 2) {
+                      return 'Last name must be at least 2 characters';
+                    }
+                    if (value.trim().length > 50) {
+                      return 'Last name must be 50 characters or less';
                     }
                     return null;
                   },
@@ -451,6 +567,131 @@ class _SignupScreenState extends State<SignupScreen> {
                       return 'Please select your department';
                     }
                     return null;
+                  },
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
+                // Student ID Field
+                TextFormField(
+                  controller: _studentIdController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                    LengthLimitingTextInputFormatter(10), // YYYY-XXXXX = 10 chars (including hyphen)
+                    TextInputFormatter.withFunction((oldValue, newValue) {
+                      // Remove all non-digits
+                      final digitsOnly = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+                      
+                      // Limit to 9 digits (4 for year + 5 for student number)
+                      final limitedDigits = digitsOnly.length > 9 
+                          ? digitsOnly.substring(0, 9) 
+                          : digitsOnly;
+                      
+                      // Format: add hyphen after 4th digit
+                      if (limitedDigits.length <= 4) {
+                        return TextEditingValue(
+                          text: limitedDigits,
+                          selection: TextSelection.collapsed(offset: limitedDigits.length),
+                        );
+                      } else {
+                        final formatted = '${limitedDigits.substring(0, 4)}-${limitedDigits.substring(4)}';
+                        return TextEditingValue(
+                          text: formatted,
+                          selection: TextSelection.collapsed(offset: formatted.length),
+                        );
+                      }
+                    }),
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'Student ID',
+                    prefixIcon: Icon(Icons.badge_outlined),
+                    border: OutlineInputBorder(),
+                    helperText: 'Format: YYYY-XXXXX (e.g., 2020-30041)',
+                    hintText: '2020-30041',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please enter your student ID';
+                    }
+                    return InputValidator.validateStudentId(value.trim());
+                  },
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
+                // Gender Dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedGender,
+                  decoration: const InputDecoration(
+                    labelText: 'Gender',
+                    prefixIcon: Icon(Icons.person_outline),
+                    border: OutlineInputBorder(),
+                    helperText: 'Select your gender',
+                  ),
+                  items: _genders.map((String gender) {
+                    return DropdownMenuItem<String>(
+                      value: gender,
+                      child: Text(gender),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedGender = newValue;
+                    });
+                  },
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please select your gender';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
+                // Year Level Dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedYearLevel,
+                  decoration: const InputDecoration(
+                    labelText: 'Year Level',
+                    prefixIcon: Icon(Icons.school_outlined),
+                    border: OutlineInputBorder(),
+                    helperText: 'Select your current year level',
+                  ),
+                  items: _yearLevels.map((String year) {
+                    return DropdownMenuItem<String>(
+                      value: year,
+                      child: Text(year),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedYearLevel = newValue;
+                    });
+                  },
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please select your year level';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context)),
+
+                // Date of Birth Field
+                TextFormField(
+                  controller: _dateOfBirthController,
+                  readOnly: true,
+                  onTap: _selectDateOfBirth,
+                  decoration: const InputDecoration(
+                    labelText: 'Date of Birth',
+                    prefixIcon: Icon(Icons.calendar_today),
+                    border: OutlineInputBorder(),
+                    helperText: 'Tap to select your date of birth',
+                  ),
+                  validator: (value) {
+                    if (_selectedDateOfBirth == null) {
+                      return 'Please select your date of birth';
+                    }
+                    return InputValidator.validateDateOfBirth(_selectedDateOfBirth);
                   },
                 ),
                 SizedBox(height: ResponsiveUtils.getSpacing(context)),

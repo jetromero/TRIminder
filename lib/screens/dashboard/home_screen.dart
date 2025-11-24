@@ -1776,10 +1776,16 @@ class _Top3Podium extends StatelessWidget {
     );
   }
 
-  String _getFirstName(String fullName) {
-    if (fullName.isEmpty) return 'Unknown';
-    final parts = fullName.trim().split(' ');
-    return parts.first;
+  String _getFirstName(String? firstName, String? fullName) {
+    // Prefer firstName if available, otherwise extract from fullName
+    if (firstName != null && firstName.isNotEmpty) {
+      return firstName;
+    }
+    if (fullName != null && fullName.isNotEmpty) {
+      final parts = fullName.trim().split(' ');
+      return parts.first;
+    }
+    return 'Unknown';
   }
 
   Widget _buildPodiumCard(
@@ -1795,7 +1801,7 @@ class _Top3Podium extends StatelessWidget {
 
     final isYou = entry.userId == currentUserId;
     final fullName = entry.fullName ?? entry.userTag ?? 'Unknown';
-    final firstName = _getFirstName(fullName);
+    final firstName = _getFirstName(entry.firstName, fullName);
     final department = entry.departmentName ?? '—';
     final screenTime = _formatScreenTime(entry.valueMinutes);
 

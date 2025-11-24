@@ -22,9 +22,14 @@ class DatabaseService {
     
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Incremented to ensure migrations run
       onCreate: _createTables,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // Run migrations on upgrade
+        await _applyMigrations(db);
+      },
       onOpen: (db) async {
+        // Also run migrations on open (for existing databases)
         await _applyMigrations(db);
       },
     );
@@ -35,14 +40,19 @@ class DatabaseService {
     await db.execute('''
     CREATE TABLE user_profiles (
       id TEXT PRIMARY KEY,
-      fullName TEXT NOT NULL,
+      firstName TEXT NOT NULL,
+      lastName TEXT NOT NULL,
       email TEXT NOT NULL,
       role TEXT NOT NULL,
       departmentId INTEGER,
       xp INTEGER NOT NULL DEFAULT 0,
       createdAt TEXT NOT NULL,
       isSynced INTEGER NOT NULL DEFAULT 0,
-      userTag TEXT
+      userTag TEXT,
+      studentId TEXT,
+      gender TEXT,
+      yearLevel TEXT,
+      dateOfBirth TEXT
     )
   ''');
 
@@ -144,6 +154,79 @@ class DatabaseService {
       final columns = await db.rawQuery('PRAGMA table_info(user_profiles)');
       final columnNames = columns.map((c) => (c['name'] as String?)).toSet();
       
+      // Migration: Split fullName into firstName and lastName
+      // SQLite doesn't support DROP COLUMN, so we need to recreate the table
+      if (columnNames.contains('fullName') && !columnNames.contains('firstName')) {
+        print('🔄 Migrating fullName to firstName/lastName (recreating table)...');
+        
+        // Step 1: Create new table with correct schema
+        await db.execute('''
+          CREATE TABLE user_profiles_new (
+            id TEXT PRIMARY KEY,
+            firstName TEXT NOT NULL,
+            lastName TEXT NOT NULL,
+            email TEXT NOT NULL,
+            role TEXT NOT NULL,
+            departmentId INTEGER,
+            xp INTEGER NOT NULL DEFAULT 0,
+            createdAt TEXT NOT NULL,
+            isSynced INTEGER NOT NULL DEFAULT 0,
+            userTag TEXT,
+            avatarUrl TEXT,
+            coverPhotoUrl TEXT,
+            bio TEXT,
+            studentId TEXT,
+            gender TEXT,
+            yearLevel TEXT,
+            dateOfBirth TEXT
+          )
+        ''');
+        
+        // Step 2: Migrate existing data
+        final profiles = await db.query('user_profiles');
+        for (final profile in profiles) {
+          final fullName = profile['fullName'] as String? ?? '';
+          final parts = fullName.trim().split(' ');
+          final firstName = parts.isNotEmpty ? parts.first : 'User';
+          final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+          
+          await db.insert('user_profiles_new', {
+            'id': profile['id'],
+            'firstName': firstName,
+            'lastName': lastName,
+            'email': profile['email'],
+            'role': profile['role'],
+            'departmentId': profile['departmentId'],
+            'xp': profile['xp'],
+            'createdAt': profile['createdAt'],
+            'isSynced': profile['isSynced'],
+            'userTag': profile['userTag'],
+            'avatarUrl': profile['avatarUrl'],
+            'coverPhotoUrl': profile['coverPhotoUrl'],
+            'bio': profile['bio'],
+            'studentId': profile['studentId'],
+            'gender': profile['gender'],
+            'yearLevel': profile['yearLevel'],
+            'dateOfBirth': profile['dateOfBirth'],
+          });
+        }
+        
+        // Step 3: Drop old table
+        await db.execute('DROP TABLE user_profiles');
+        
+        // Step 4: Rename new table
+        await db.execute('ALTER TABLE user_profiles_new RENAME TO user_profiles');
+        
+        // Step 5: Recreate indexes
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_screen_time_synced ON screen_time_entries(isSynced)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_synced ON xp_award_history(isSynced)');
+        
+        print('✅ Migration complete: fullName split into firstName/lastName');
+      }
+      
       if (!columnNames.contains('userTag')) {
         await db.execute('ALTER TABLE user_profiles ADD COLUMN userTag TEXT');
       }
@@ -158,6 +241,85 @@ class DatabaseService {
       
       if (!columnNames.contains('bio')) {
         await db.execute('ALTER TABLE user_profiles ADD COLUMN bio TEXT');
+      }
+
+      // Cleanup: Remove fullName column if it still exists (after migration)
+      if (columnNames.contains('fullName') && columnNames.contains('firstName') && columnNames.contains('lastName')) {
+        print('🔄 Removing deprecated fullName column...');
+        try {
+          // Recreate table without fullName column
+          await db.execute('''
+            CREATE TABLE user_profiles_temp (
+              id TEXT PRIMARY KEY,
+              firstName TEXT NOT NULL,
+              lastName TEXT NOT NULL,
+              email TEXT NOT NULL,
+              role TEXT NOT NULL,
+              departmentId INTEGER,
+              xp INTEGER NOT NULL DEFAULT 0,
+              createdAt TEXT NOT NULL,
+              isSynced INTEGER NOT NULL DEFAULT 0,
+              userTag TEXT,
+              avatarUrl TEXT,
+              coverPhotoUrl TEXT,
+              bio TEXT,
+              studentId TEXT,
+              gender TEXT,
+              yearLevel TEXT,
+              dateOfBirth TEXT
+            )
+          ''');
+          
+          // Copy data (excluding fullName)
+          final profiles = await db.query('user_profiles');
+          for (final profile in profiles) {
+            await db.insert('user_profiles_temp', {
+              'id': profile['id'],
+              'firstName': profile['firstName'],
+              'lastName': profile['lastName'],
+              'email': profile['email'],
+              'role': profile['role'],
+              'departmentId': profile['departmentId'],
+              'xp': profile['xp'],
+              'createdAt': profile['createdAt'],
+              'isSynced': profile['isSynced'],
+              'userTag': profile['userTag'],
+              'avatarUrl': profile['avatarUrl'],
+              'coverPhotoUrl': profile['coverPhotoUrl'],
+              'bio': profile['bio'],
+              'studentId': profile['studentId'],
+              'gender': profile['gender'],
+              'yearLevel': profile['yearLevel'],
+              'dateOfBirth': profile['dateOfBirth'],
+            });
+          }
+          
+          // Drop old table and rename new one
+          await db.execute('DROP TABLE user_profiles');
+          await db.execute('ALTER TABLE user_profiles_temp RENAME TO user_profiles');
+          
+          print('✅ Removed deprecated fullName column');
+        } catch (e) {
+          print('⚠️ Error removing fullName column: $e');
+          // Continue - this is not critical
+        }
+      }
+
+      // Add new signup fields
+      if (!columnNames.contains('studentId')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN studentId TEXT');
+      }
+      
+      if (!columnNames.contains('gender')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN gender TEXT');
+      }
+      
+      if (!columnNames.contains('yearLevel')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN yearLevel TEXT');
+      }
+      
+      if (!columnNames.contains('dateOfBirth')) {
+        await db.execute('ALTER TABLE user_profiles ADD COLUMN dateOfBirth TEXT');
       }
 
       // Ensure departments table exists

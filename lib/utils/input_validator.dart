@@ -68,4 +68,49 @@ class InputValidator {
   static bool isRateLimited(DateTime lastAttempt, Duration cooldown) {
     return DateTime.now().difference(lastAttempt) < cooldown;
   }
+
+  // Student ID validation (format: YYYY-XXXXX, example: "2020-30041")
+  static String? validateStudentId(String studentId) {
+    if (studentId.isEmpty) return 'Student ID is required';
+    
+    // Remove spaces for validation
+    final cleaned = studentId.replaceAll(' ', '');
+    
+    // Check format: YYYY-XXXXX (4 digits, hyphen, 5 digits)
+    final studentIdRegex = RegExp(r'^\d{4}-\d{5}$');
+    if (!studentIdRegex.hasMatch(cleaned)) {
+      return 'Student ID must be in format YYYY-XXXXX (e.g., 2020-30041)';
+    }
+    
+    return null;
+  }
+
+  // Date of Birth validation
+  static String? validateDateOfBirth(DateTime? dateOfBirth) {
+    if (dateOfBirth == null) return 'Date of birth is required';
+    
+    final now = DateTime.now();
+    final age = now.year - dateOfBirth.year - (now.month > dateOfBirth.month || 
+        (now.month == dateOfBirth.month && now.day >= dateOfBirth.day) ? 0 : 1);
+    
+    if (age < 16) {
+      return 'You must be at least 16 years old';
+    }
+    
+    if (age > 100) {
+      return 'Please enter a valid date of birth';
+    }
+    
+    // Check if date is not in the future
+    if (dateOfBirth.isAfter(now)) {
+      return 'Date of birth cannot be in the future';
+    }
+    
+    return null;
+  }
+
+  // Sanitize student ID (remove spaces, preserve hyphen and digits)
+  static String sanitizeStudentId(String studentId) {
+    return studentId.replaceAll(' ', '').trim();
+  }
 }

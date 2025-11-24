@@ -3,7 +3,8 @@ import '../services/database_service.dart';
 // User profile model matching Supabase profiles table
 class UserProfile {
   final String id;
-  final String fullName;
+  final String firstName;
+  final String lastName;
   final String email;
   final String role;
   final int? departmentId;
@@ -14,10 +15,18 @@ class UserProfile {
   final String? avatarUrl; // Supabase: avatar_url
   final String? coverPhotoUrl; // Supabase: cover_photo_url
   final String? bio; // Supabase: bio (max 500 chars)
+  final String? studentId; // Supabase: student_id
+  final String? gender; // Supabase: gender
+  final String? yearLevel; // Supabase: year_level
+  final DateTime? dateOfBirth; // Supabase: date_of_birth
+
+  // Computed property for backward compatibility
+  String get fullName => '$firstName $lastName';
 
   UserProfile({
     required this.id,
-    required this.fullName,
+    required this.firstName,
+    required this.lastName,
     required this.email,
     required this.role,
     this.departmentId,
@@ -28,11 +37,16 @@ class UserProfile {
     this.avatarUrl,
     this.coverPhotoUrl,
     this.bio,
+    this.studentId,
+    this.gender,
+    this.yearLevel,
+    this.dateOfBirth,
   });
 
   UserProfile copyWith({
     String? id,
-    String? fullName,
+    String? firstName,
+    String? lastName,
     String? email,
     String? role,
     int? departmentId,
@@ -43,10 +57,15 @@ class UserProfile {
     String? avatarUrl,
     String? coverPhotoUrl,
     String? bio,
+    String? studentId,
+    String? gender,
+    String? yearLevel,
+    DateTime? dateOfBirth,
   }) {
     return UserProfile(
       id: id ?? this.id,
-      fullName: fullName ?? this.fullName,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
       email: email ?? this.email,
       role: role ?? this.role,
       departmentId: departmentId ?? this.departmentId,
@@ -57,13 +76,18 @@ class UserProfile {
       avatarUrl: avatarUrl ?? this.avatarUrl,
       coverPhotoUrl: coverPhotoUrl ?? this.coverPhotoUrl,
       bio: bio ?? this.bio,
+      studentId: studentId ?? this.studentId,
+      gender: gender ?? this.gender,
+      yearLevel: yearLevel ?? this.yearLevel,
+      dateOfBirth: dateOfBirth ?? this.dateOfBirth,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'fullName': fullName,
+      'firstName': firstName,
+      'lastName': lastName,
       'email': email,
       'role': role,
       'departmentId': departmentId,
@@ -74,13 +98,34 @@ class UserProfile {
       'avatarUrl': avatarUrl,
       'coverPhotoUrl': coverPhotoUrl,
       'bio': bio,
+      'studentId': studentId,
+      'gender': gender,
+      'yearLevel': yearLevel,
+      'dateOfBirth': dateOfBirth?.toIso8601String(),
     };
   }
 
   factory UserProfile.fromMap(Map<String, dynamic> map) {
+    // Handle migration from fullName to firstName/lastName
+    String firstName;
+    String lastName;
+    if (map['firstName'] != null && map['lastName'] != null) {
+      firstName = map['firstName'];
+      lastName = map['lastName'];
+    } else if (map['fullName'] != null) {
+      // Migration: split fullName by space
+      final parts = (map['fullName'] as String).trim().split(' ');
+      firstName = parts.isNotEmpty ? parts.first : '';
+      lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    } else {
+      firstName = '';
+      lastName = '';
+    }
+
     return UserProfile(
       id: map['id'],
-      fullName: map['fullName'],
+      firstName: firstName,
+      lastName: lastName,
       email: map['email'],
       role: map['role'],
       departmentId: map['departmentId'],
@@ -91,13 +136,18 @@ class UserProfile {
       avatarUrl: map['avatarUrl'],
       coverPhotoUrl: map['coverPhotoUrl'],
       bio: map['bio'],
+      studentId: map['studentId'],
+      gender: map['gender'],
+      yearLevel: map['yearLevel'],
+      dateOfBirth: map['dateOfBirth'] != null ? DateTime.parse(map['dateOfBirth']) : null,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'full_name': fullName,
+      'first_name': firstName,
+      'last_name': lastName,
       'email': email,
       'role': role,
       'department_id': departmentId,
@@ -107,13 +157,48 @@ class UserProfile {
       if (avatarUrl != null) 'avatar_url': avatarUrl,
       if (coverPhotoUrl != null) 'cover_photo_url': coverPhotoUrl,
       if (bio != null) 'bio': bio,
+      if (studentId != null) 'student_id': studentId,
+      if (gender != null) 'gender': gender,
+      if (yearLevel != null) 'year_level': yearLevel,
+      if (dateOfBirth != null) 'date_of_birth': '${dateOfBirth!.year}-${dateOfBirth!.month.toString().padLeft(2, '0')}-${dateOfBirth!.day.toString().padLeft(2, '0')}',
     };
   }
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
+    // Handle migration from full_name to first_name/last_name
+    String firstName;
+    String lastName;
+    if (json['first_name'] != null && json['last_name'] != null) {
+      firstName = json['first_name'];
+      lastName = json['last_name'];
+    } else if (json['full_name'] != null) {
+      // Migration: split full_name by space
+      final parts = (json['full_name'] as String).trim().split(' ');
+      firstName = parts.isNotEmpty ? parts.first : '';
+      lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
+    } else {
+      firstName = '';
+      lastName = '';
+    }
+
+    // Parse date_of_birth if present
+    DateTime? dateOfBirth;
+    if (json['date_of_birth'] != null) {
+      final dateStr = json['date_of_birth'] as String;
+      final dateParts = dateStr.split('-');
+      if (dateParts.length == 3) {
+        dateOfBirth = DateTime(
+          int.parse(dateParts[0]),
+          int.parse(dateParts[1]),
+          int.parse(dateParts[2]),
+        );
+      }
+    }
+
     return UserProfile(
       id: json['id'],
-      fullName: json['full_name'],
+      firstName: firstName,
+      lastName: lastName,
       email: json['email'],
       role: json['role'],
       departmentId: json['department_id'],
@@ -124,6 +209,10 @@ class UserProfile {
       avatarUrl: json['avatar_url'],
       coverPhotoUrl: json['cover_photo_url'],
       bio: json['bio'],
+      studentId: json['student_id'],
+      gender: json['gender'],
+      yearLevel: json['year_level'],
+      dateOfBirth: dateOfBirth,
     );
   }
 
@@ -460,17 +549,22 @@ class XPAwardHistory {
 class RankingEntry {
   final String userId;
   final String? userTag;
-  final String? fullName;
+  final String? firstName;
+  final String? lastName;
   final int? departmentId;
   final String? departmentName;
   final String? avatarUrl; // Avatar URL from Supabase Storage
   final int valueMinutes; // daily total or averaged minutes depending on period
   final String period; // 'daily' | 'weekly' | 'monthly'
 
+  // Computed property for backward compatibility
+  String? get fullName => firstName != null && lastName != null ? '$firstName $lastName' : null;
+
   RankingEntry({
     required this.userId,
     this.userTag,
-    this.fullName,
+    this.firstName,
+    this.lastName,
     this.departmentId,
     this.departmentName,
     this.avatarUrl,
@@ -479,10 +573,29 @@ class RankingEntry {
   });
 
   factory RankingEntry.fromMap(Map<String, dynamic> map, {required String period}) {
+    // Handle migration from full_name to first_name/last_name
+    String? firstName;
+    String? lastName;
+    if (map['first_name'] != null && map['last_name'] != null) {
+      firstName = map['first_name'] as String?;
+      lastName = map['last_name'] as String?;
+    } else if (map['full_name'] != null) {
+      // Migration: split full_name by space
+      final parts = (map['full_name'] as String).trim().split(' ');
+      firstName = parts.isNotEmpty ? parts.first : null;
+      lastName = parts.length > 1 ? parts.sublist(1).join(' ') : null;
+    } else if (map['fullName'] != null) {
+      // Handle camelCase version
+      final parts = (map['fullName'] as String).trim().split(' ');
+      firstName = parts.isNotEmpty ? parts.first : null;
+      lastName = parts.length > 1 ? parts.sublist(1).join(' ') : null;
+    }
+
     return RankingEntry(
       userId: map['user_id'] ?? map['id'] ?? map['userId'],
       userTag: map['user_tag'] ?? map['userTag'],
-      fullName: map['full_name'] ?? map['fullName'],
+      firstName: firstName,
+      lastName: lastName,
       departmentId: map['department_id'] ?? map['departmentId'],
       departmentName: map['department_name'] ?? map['departmentName'],
       avatarUrl: map['avatar_url'] ?? map['avatarUrl'],
@@ -495,7 +608,8 @@ class RankingEntry {
     return {
       'user_id': userId,
       'user_tag': userTag,
-      'full_name': fullName,
+      'first_name': firstName,
+      'last_name': lastName,
       'department_id': departmentId,
       'department_name': departmentName,
       'avatar_url': avatarUrl,

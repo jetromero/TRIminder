@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../widgets/permission_status_widget.dart';
 import '../../utils/responsive_utils.dart';
+import '../../utils/input_validator.dart';
 import '../../services/supabase_service.dart';
 import '../../services/user_session_manager.dart';
 import '../../services/database_service.dart';
@@ -23,12 +25,43 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isLoading = true;
   bool _isDeletingAccount = false;
+  bool _isEditingAccountInfo = false;
+  bool _isSaving = false;
   UserProfile? _userProfile;
+  
+  // Form controllers and state for editing
+  final _studentIdController = TextEditingController();
+  final _dateOfBirthController = TextEditingController();
+  String? _selectedGender;
+  String? _selectedYearLevel;
+  DateTime? _selectedDateOfBirth;
+  
+  // Gender and Year Level options
+  final List<String> _genders = [
+    'Male',
+    'Female',
+    'Other',
+    'Prefer not to say',
+  ];
+  
+  final List<String> _yearLevels = [
+    '1st Year',
+    '2nd Year',
+    '3rd Year',
+    '4th Year',
+  ];
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
+  }
+  
+  @override
+  void dispose() {
+    _studentIdController.dispose();
+    _dateOfBirthController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadUserData() async {
@@ -40,6 +73,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           setState(() {
             _userProfile = profile;
             _isLoading = false;
+            // Initialize form fields with current values
+            if (profile != null) {
+              _studentIdController.text = profile.studentId ?? '';
+              _selectedGender = profile.gender;
+              _selectedYearLevel = profile.yearLevel;
+              _selectedDateOfBirth = profile.dateOfBirth;
+              if (profile.dateOfBirth != null) {
+                final months = ['January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+                final dob = profile.dateOfBirth!;
+                _dateOfBirthController.text = '${months[dob.month - 1]} ${dob.day}, ${dob.year}';
+              }
+            }
           });
         }
       } else {
@@ -52,6 +98,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _isLoading = false);
       }
       print('Error loading user data: $e');
+    }
+  }
+  
+  Future<void> _selectDateOfBirth() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDateOfBirth ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365 * 100)),
+      lastDate: DateTime.now(),
+      helpText: 'Select Date of Birth',
+    );
+    
+    if (picked != null) {
+      setState(() {
+        _selectedDateOfBirth = picked;
+        final months = ['January', 'February', 'March', 'April', 'May', 'June',
+          'July', 'August', 'September', 'October', 'November', 'December'];
+        _dateOfBirthController.text = '${months[picked.month - 1]} ${picked.day}, ${picked.year}';
+      });
+    }
+  }
+  
+  Future<void> _saveAccountInfo() async {
+    if (_userProfile == null) return;
+    
+    // Validate inputs
+    if (_studentIdController.text.trim().isNotEmpty) {
+      final studentIdError = InputValidator.validateStudentId(_studentIdController.text.trim());
+      if (studentIdError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(studentIdError),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+    
+    if (_selectedDateOfBirth != null) {
+      final dobError = InputValidator.validateDateOfBirth(_selectedDateOfBirth);
+      if (dobError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(dobError),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+    
+    setState(() {
+      _isSaving = true;
+    });
+    
+    try {
+      // Update profile with new values
+      final updatedProfile = _userProfile!.copyWith(
+        studentId: _studentIdController.text.trim().isEmpty ? null : InputValidator.sanitizeStudentId(_studentIdController.text.trim()),
+        gender: _selectedGender,
+        yearLevel: _selectedYearLevel,
+        dateOfBirth: _selectedDateOfBirth,
+      );
+      
+      // Update in Supabase
+      final supabaseService = SupabaseService();
+      final result = await supabaseService.updateUserProfile(updatedProfile);
+      
+      if (result != null) {
+        // Update local database
+        await DatabaseService().updateUserProfile(updatedProfile);
+        
+        if (mounted) {
+          setState(() {
+            _userProfile = result;
+            _isEditingAccountInfo = false;
+            _isSaving = false;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Account information updated successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception('Failed to update profile');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating account information: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  
+  void _cancelEditing() {
+    // Reset form fields to current profile values
+    if (_userProfile != null) {
+      setState(() {
+        _studentIdController.text = _userProfile!.studentId ?? '';
+        _selectedGender = _userProfile!.gender;
+        _selectedYearLevel = _userProfile!.yearLevel;
+        _selectedDateOfBirth = _userProfile!.dateOfBirth;
+        if (_userProfile!.dateOfBirth != null) {
+          final months = ['January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'];
+          final dob = _userProfile!.dateOfBirth!;
+          _dateOfBirthController.text = '${months[dob.month - 1]} ${dob.day}, ${dob.year}';
+        } else {
+          _dateOfBirthController.clear();
+        }
+        _isEditingAccountInfo = false;
+      });
     }
   }
 
@@ -149,18 +319,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Icon(
-                  Icons.person,
-                  color: Theme.of(context).colorScheme.primary,
+                Row(
+                  children: [
+                    Icon(
+                      Icons.person,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Account',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  'Account',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                if (!_isEditingAccountInfo && _userProfile != null)
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () {
+                      setState(() {
+                        _isEditingAccountInfo = true;
+                      });
+                    },
+                    tooltip: 'Edit Account Information',
                   ),
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -169,7 +354,148 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildInfoRow('Email', _userProfile!.email),
               if (_userProfile!.userTag != null)
                 _buildInfoRow('User Tag', '@${_userProfile!.userTag}'),
-              _buildInfoRow('XP', '${_userProfile!.xp} points'),
+              
+              // Editable fields
+              if (_isEditingAccountInfo) ...[
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 16),
+                Text(
+                  'Edit Account Information',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Student ID Field
+                TextFormField(
+                  controller: _studentIdController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[\d-]')),
+                    LengthLimitingTextInputFormatter(10),
+                    TextInputFormatter.withFunction((oldValue, newValue) {
+                      final digitsOnly = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+                      final limitedDigits = digitsOnly.length > 9 
+                          ? digitsOnly.substring(0, 9) 
+                          : digitsOnly;
+                      if (limitedDigits.length <= 4) {
+                        return TextEditingValue(
+                          text: limitedDigits,
+                          selection: TextSelection.collapsed(offset: limitedDigits.length),
+                        );
+                      } else {
+                        final formatted = '${limitedDigits.substring(0, 4)}-${limitedDigits.substring(4)}';
+                        return TextEditingValue(
+                          text: formatted,
+                          selection: TextSelection.collapsed(offset: formatted.length),
+                        );
+                      }
+                    }),
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: 'Student ID',
+                    hintText: '2020-30041',
+                    helperText: 'Format: YYYY-XXXXX (e.g., 2020-30041)',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (value) {
+                    if (value != null && value.trim().isNotEmpty) {
+                      return InputValidator.validateStudentId(value.trim());
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Gender Dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedGender,
+                  decoration: const InputDecoration(
+                    labelText: 'Gender',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _genders.map((String gender) {
+                    return DropdownMenuItem<String>(
+                      value: gender,
+                      child: Text(gender),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedGender = newValue;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Year Level Dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedYearLevel,
+                  decoration: const InputDecoration(
+                    labelText: 'Year Level',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _yearLevels.map((String year) {
+                    return DropdownMenuItem<String>(
+                      value: year,
+                      child: Text(year),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedYearLevel = newValue;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                
+                // Date of Birth Field
+                TextFormField(
+                  controller: _dateOfBirthController,
+                  readOnly: true,
+                  onTap: _selectDateOfBirth,
+                  decoration: const InputDecoration(
+                    labelText: 'Date of Birth',
+                    hintText: 'Tap to select',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                
+                // Save and Cancel buttons
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: _isSaving ? null : _cancelEditing,
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _isSaving ? null : _saveAccountInfo,
+                      child: _isSaving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save'),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                // Read-only display
+                if (_userProfile!.studentId != null && _userProfile!.studentId!.isNotEmpty)
+                  _buildInfoRow('Student ID', _userProfile!.studentId!),
+                if (_userProfile!.gender != null && _userProfile!.gender!.isNotEmpty)
+                  _buildInfoRow('Gender', _userProfile!.gender!),
+                if (_userProfile!.yearLevel != null && _userProfile!.yearLevel!.isNotEmpty)
+                  _buildInfoRow('Year Level', _userProfile!.yearLevel!),
+                if (_userProfile!.dateOfBirth != null)
+                  _buildInfoRow('Date of Birth', _formatDateOfBirth(_userProfile!.dateOfBirth!)),
+              ],
             ] else ...[
               const Text('Unable to load profile information'),
             ],
@@ -611,6 +937,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     }
+  }
+
+  String _formatDateOfBirth(DateTime dateOfBirth) {
+    final months = ['January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'];
+    return '${months[dateOfBirth.month - 1]} ${dateOfBirth.day}, ${dateOfBirth.year}';
   }
 
   Widget _buildInfoRow(String label, String value) {

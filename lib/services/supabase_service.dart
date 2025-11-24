@@ -181,8 +181,13 @@ class SupabaseService {
   Future<AuthResponse> signUpWithEmailPassword({
     required String email,
     required String password,
-    required String fullName,
+    required String firstName,
+    required String lastName,
     required String department,
+    String? studentId,
+    String? gender,
+    String? yearLevel,
+    DateTime? dateOfBirth,
   }) async {
     // Input validation
     if (!InputValidator.isValidEmail(email)) {
@@ -194,28 +199,60 @@ class SupabaseService {
       throw Exception(passwordError);
     }
 
-    final nameError = InputValidator.validateName(fullName);
-    if (nameError != null) {
-      throw Exception(nameError);
+    final firstNameError = InputValidator.validateName(firstName);
+    if (firstNameError != null) {
+      throw Exception('First name: $firstNameError');
+    }
+
+    final lastNameError = InputValidator.validateName(lastName);
+    if (lastNameError != null) {
+      throw Exception('Last name: $lastNameError');
+    }
+
+    if (studentId != null && studentId.isNotEmpty) {
+      final studentIdError = InputValidator.validateStudentId(studentId);
+      if (studentIdError != null) {
+        throw Exception(studentIdError);
+      }
+    }
+
+    if (dateOfBirth != null) {
+      final dobError = InputValidator.validateDateOfBirth(dateOfBirth);
+      if (dobError != null) {
+        throw Exception(dobError);
+      }
     }
 
     // Sanitize inputs
     final sanitizedEmail = InputValidator.sanitizeInput(email);
-    final sanitizedName = InputValidator.sanitizeInput(fullName);
+    final sanitizedFirstName = InputValidator.sanitizeInput(firstName);
+    final sanitizedLastName = InputValidator.sanitizeInput(lastName);
     final sanitizedDepartment = InputValidator.sanitizeInput(department);
+    final sanitizedStudentId = studentId != null ? InputValidator.sanitizeStudentId(studentId) : null;
 
     try {
       print('Starting signup for: ${InputValidator.hashForLogging(email)}');
       const redirectUrl = 'triminder://auth-callback';
       print('📧 Email confirmation will redirect to: $redirectUrl');
 
+      // Format date_of_birth for metadata (YYYY-MM-DD)
+      String? dateOfBirthStr;
+      if (dateOfBirth != null) {
+        dateOfBirthStr = '${dateOfBirth.year}-${dateOfBirth.month.toString().padLeft(2, '0')}-${dateOfBirth.day.toString().padLeft(2, '0')}';
+      }
+
       final response = await _client.auth.signUp(
         email: sanitizedEmail,
         password: password,
         emailRedirectTo: redirectUrl,
         data: {
-          'full_name': sanitizedName,
+          'first_name': sanitizedFirstName,
+          'last_name': sanitizedLastName,
           'department': sanitizedDepartment,
+          if (sanitizedStudentId != null) 'student_id': sanitizedStudentId,
+          if (gender != null) 'gender': gender,
+          if (yearLevel != null) 'year_level': yearLevel,
+          if (dateOfBirthStr != null) 'date_of_birth': dateOfBirthStr,
         },
       );
 
@@ -226,18 +263,23 @@ class SupabaseService {
 
         final int? departmentId = await _getDepartmentId(sanitizedDepartment);
 
-        // Generate a unique user tag for the new user
-        final String userTag = await _generateUniqueUserTag(seedName: sanitizedName);
+        // Generate a unique user tag for the new user (use firstName)
+        final String userTag = await _generateUniqueUserTag(seedName: sanitizedFirstName);
 
         final userProfile = UserProfile(
           id: response.user!.id,
-          fullName: sanitizedName,
+          firstName: sanitizedFirstName,
+          lastName: sanitizedLastName,
           email: sanitizedEmail,
           role: 'student',
           departmentId: departmentId,
           xp: 0,
           createdAt: DateTime.now(),
           isSynced: true,
+          studentId: sanitizedStudentId,
+          gender: gender,
+          yearLevel: yearLevel,
+          dateOfBirth: dateOfBirth,
         );
 
         await _createUserProfileWithTag(userProfile, userTag);
@@ -1229,7 +1271,7 @@ class SupabaseService {
 
       final base = _client
           .from('user_usage_daily')
-          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
+          .select('user_id, total_minutes, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .eq('usage_date', dateStr);
 
       if (departmentId != null) {
@@ -1243,16 +1285,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['total_minutes'] ?? 0) as int,
-          period: 'daily',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'total_minutes': row['total_minutes'] ?? 0,
+        }, period: 'daily');
       }).toList();
     } catch (e) {
       print('Error fetching daily rankings: $e');
@@ -1270,7 +1312,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('weekly_user_avg')
-          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))');
+          .select('user_id, avg_minutes_7d, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -1282,16 +1324,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
-          period: 'weekly',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'avg_minutes_7d': row['avg_minutes_7d'] ?? 0,
+        }, period: 'weekly');
       }).toList();
     } catch (e) {
       print('Error fetching weekly rankings: $e');
@@ -1309,7 +1351,7 @@ class SupabaseService {
     try {
       final base = _client
           .from('monthly_user_avg')
-          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))');
+          .select('user_id, avg_minutes_30d, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))');
 
       if (departmentId != null) {
         base.eq('profiles.department_id', departmentId);
@@ -1321,16 +1363,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
-          period: 'monthly',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'avg_minutes_30d': row['avg_minutes_30d'] ?? 0,
+        }, period: 'monthly');
       }).toList();
     } catch (e) {
       print('Error fetching monthly rankings: $e');
@@ -1386,7 +1428,7 @@ class SupabaseService {
 
       final base = _client
           .from('user_usage_daily')
-          .select('user_id, total_minutes, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
+          .select('user_id, total_minutes, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .eq('usage_date', dateStr)
           .inFilter('user_id', friendIds);
 
@@ -1397,16 +1439,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['total_minutes'] ?? 0) as int,
-          period: 'daily',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'total_minutes': row['total_minutes'] ?? 0,
+        }, period: 'daily');
       }).toList();
     } catch (e) {
       print('Error fetching friends daily rankings: $e');
@@ -1428,7 +1470,7 @@ class SupabaseService {
 
       final base = _client
           .from('weekly_user_avg')
-          .select('user_id, avg_minutes_7d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
+          .select('user_id, avg_minutes_7d, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .inFilter('user_id', friendIds);
 
       final rows = await base
@@ -1438,16 +1480,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['avg_minutes_7d'] ?? 0) as int,
-          period: 'weekly',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'avg_minutes_7d': row['avg_minutes_7d'] ?? 0,
+        }, period: 'weekly');
       }).toList();
     } catch (e) {
       print('Error fetching friends weekly rankings: $e');
@@ -1469,7 +1511,7 @@ class SupabaseService {
 
       final base = _client
           .from('monthly_user_avg')
-          .select('user_id, avg_minutes_30d, profiles!inner(id, full_name, user_tag, department_id, avatar_url, departments!inner(name))')
+          .select('user_id, avg_minutes_30d, profiles!inner(id, first_name, last_name, user_tag, department_id, avatar_url, departments!inner(name))')
           .inFilter('user_id', friendIds);
 
       final rows = await base
@@ -1479,16 +1521,16 @@ class SupabaseService {
       return (rows as List).map((row) {
         final profile = row['profiles'] as Map<String, dynamic>?;
         final department = profile != null ? profile['departments'] as Map<String, dynamic>? : null;
-        return RankingEntry(
-          userId: row['user_id'] as String,
-          userTag: profile != null ? profile['user_tag'] as String? : null,
-          fullName: profile != null ? profile['full_name'] as String? : null,
-          departmentId: profile != null ? profile['department_id'] as int? : null,
-          departmentName: department != null ? department['name'] as String? : null,
-          avatarUrl: profile != null ? profile['avatar_url'] as String? : null,
-          valueMinutes: (row['avg_minutes_30d'] ?? 0) as int,
-          period: 'monthly',
-        );
+        return RankingEntry.fromMap({
+          'user_id': row['user_id'],
+          'user_tag': profile?['user_tag'],
+          'first_name': profile?['first_name'],
+          'last_name': profile?['last_name'],
+          'department_id': profile?['department_id'],
+          'department_name': department?['name'],
+          'avatar_url': profile?['avatar_url'],
+          'avg_minutes_30d': row['avg_minutes_30d'] ?? 0,
+        }, period: 'monthly');
       }).toList();
     } catch (e) {
       print('Error fetching friends monthly rankings: $e');

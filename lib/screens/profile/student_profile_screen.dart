@@ -9,6 +9,7 @@ import '../../widgets/profile/avatar_widget.dart';
 import '../../widgets/profile/badge_grid_widget.dart';
 import '../../utils/responsive_utils.dart';
 import 'edit_profile_screen.dart';
+import '../settings/settings_screen.dart';
 
 class StudentProfileScreen extends StatefulWidget {
   final String? userId; // null = own profile
@@ -584,6 +585,18 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             
             const SizedBox(height: 24),
             
+            // User Information Section (Display Only)
+            if (_profile!.studentId != null || _profile!.gender != null || 
+                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
+              Padding(
+                padding: ResponsiveUtils.getScreenPadding(context),
+                child: _buildUserInfoSection(),
+              ),
+            
+            if (_profile!.studentId != null || _profile!.gender != null || 
+                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
+              const SizedBox(height: 24),
+            
             // Offline indicator
             if (_isOffline)
               Padding(
@@ -1054,50 +1067,86 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
     final fontScale = ResponsiveUtils.getFontScale(context);
     final isVerySmall = ResponsiveUtils.isVerySmallScreen(context);
     
-    final statItems = [
-      _buildStatItem(
-        icon: Icons.star,
-        label: 'XP',
-        value: '${_profile!.xp}',
-        fontScale: fontScale,
-        isVerySmall: isVerySmall,
-      ),
-      _buildStatItem(
-        icon: Icons.emoji_events,
-        label: 'Level',
-        value: '$level',
-        fontScale: fontScale,
-        isVerySmall: isVerySmall,
-      ),
-      _buildStatItem(
-        icon: Icons.people,
-        label: 'Friends',
-        value: '$_friendsCount',
-        fontScale: fontScale,
-        isVerySmall: isVerySmall,
-      ),
-      _buildStatItem(
-        icon: Icons.workspace_premium,
-        label: 'Badges',
-        value: '${_badges.length}',
-        fontScale: fontScale,
-        isVerySmall: isVerySmall,
-      ),
-    ];
-    
-    // Use Wrap for very small screens, Row for larger screens
+    // Use Wrap for very small screens, Row with Expanded for larger screens
     if (isVerySmall) {
       return Wrap(
         alignment: WrapAlignment.spaceAround,
         spacing: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 12, desktop: 16),
         runSpacing: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20),
-        children: statItems,
+        children: [
+          _buildStatItem(
+            icon: Icons.star,
+            label: 'XP',
+            value: '${_profile!.xp}',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+          _buildStatItem(
+            icon: Icons.emoji_events,
+            label: 'Level',
+            value: '$level',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+          _buildStatItem(
+            icon: Icons.people,
+            label: 'Friends',
+            value: '$_friendsCount',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+          _buildStatItem(
+            icon: Icons.workspace_premium,
+            label: 'Badges',
+            value: '${_badges.length}',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+        ],
       );
     }
     
+    // Use Expanded widgets to ensure even distribution on larger screens
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: statItems,
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Expanded(
+          child: _buildStatItem(
+            icon: Icons.star,
+            label: 'XP',
+            value: '${_profile!.xp}',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+        ),
+        Expanded(
+          child: _buildStatItem(
+            icon: Icons.emoji_events,
+            label: 'Level',
+            value: '$level',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+        ),
+        Expanded(
+          child: _buildStatItem(
+            icon: Icons.people,
+            label: 'Friends',
+            value: '$_friendsCount',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+        ),
+        Expanded(
+          child: _buildStatItem(
+            icon: Icons.workspace_premium,
+            label: 'Badges',
+            value: '${_badges.length}',
+            fontScale: fontScale,
+            isVerySmall: isVerySmall,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1144,31 +1193,40 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.info_outline,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
-                ),
-                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
-                Flexible(
-                  child: Text(
-                    'About',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * fontScale,
-                    ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: Theme.of(context).colorScheme.primary,
+                        size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
+                      ),
+                      SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
+                      Flexible(
+                        child: Text(
+                          'About',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * fontScale,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                if (_isOwnProfile) ...[
-                  const Spacer(),
+                if (_isOwnProfile)
                   IconButton(
                     icon: Icon(
                       Icons.edit,
                       size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 18 : 20, tablet: 20, desktop: 22),
                     ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                     onPressed: () async {
                       final result = await Navigator.push(
                         context,
@@ -1209,18 +1267,178 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                       }
                     },
                   ),
-                ],
               ],
             ),
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
-            Text(
-              _profile!.bio!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+            SizedBox(
+              width: double.infinity,
+              child: Text(
+                _profile!.bio!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                  height: 1.5,
+                  letterSpacing: 0.2,
+                ),
+                textAlign: TextAlign.left,
+                softWrap: true,
+                overflow: TextOverflow.visible,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildUserInfoSection() {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+    final isVerySmall = ResponsiveUtils.isVerySmallScreen(context);
+    
+    // Format date of birth for display
+    String? formattedDateOfBirth;
+    if (_profile!.dateOfBirth != null) {
+      final months = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+      final dob = _profile!.dateOfBirth!;
+      formattedDateOfBirth = '${months[dob.month - 1]} ${dob.day}, ${dob.year}';
+    }
+    
+    return Card(
+      child: Padding(
+        padding: ResponsiveUtils.getCardPadding(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
+                ),
+                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
+                Flexible(
+                  child: Text(
+                    'Information',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * fontScale,
+                    ),
+                  ),
+                ),
+                if (_isOwnProfile) ...[
+                  const Spacer(),
+                  TextButton.icon(
+                    icon: Icon(
+                      Icons.settings,
+                      size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 16 : 18, tablet: 18, desktop: 20),
+                    ),
+                    label: Text(
+                      'Edit',
+                      style: TextStyle(
+                        fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                      ),
+                    ),
+                    onPressed: () {
+                      // Navigate to Account Settings
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsScreen(),
+                        ),
+                      ).then((_) {
+                        // Reload profile when returning from settings
+                        if (mounted) {
+                          _loadProfile();
+                        }
+                      });
+                    },
+                  ),
+                ],
+              ],
+            ),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
+            if (_profile!.studentId != null && _profile!.studentId!.isNotEmpty)
+              _buildInfoRow(
+                icon: Icons.badge_outlined,
+                label: 'Student ID',
+                value: _profile!.studentId!,
+                fontScale: fontScale,
+                isVerySmall: isVerySmall,
+              ),
+            if (_profile!.gender != null && _profile!.gender!.isNotEmpty)
+              _buildInfoRow(
+                icon: Icons.person_outline,
+                label: 'Gender',
+                value: _profile!.gender!,
+                fontScale: fontScale,
+                isVerySmall: isVerySmall,
+              ),
+            if (_profile!.yearLevel != null && _profile!.yearLevel!.isNotEmpty)
+              _buildInfoRow(
+                icon: Icons.school_outlined,
+                label: 'Year Level',
+                value: _profile!.yearLevel!,
+                fontScale: fontScale,
+                isVerySmall: isVerySmall,
+              ),
+            if (formattedDateOfBirth != null)
+              _buildInfoRow(
+                icon: Icons.calendar_today,
+                label: 'Date of Birth',
+                value: formattedDateOfBirth,
+                fontScale: fontScale,
+                isVerySmall: isVerySmall,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    required double fontScale,
+    required bool isVerySmall,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 18 : 20, tablet: 20, desktop: 22),
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          ),
+          SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                    fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                  ),
+                ),
+                SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 2, tablet: 2, desktop: 2)),
+                Text(
+                  value,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
