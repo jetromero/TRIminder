@@ -16,6 +16,7 @@ import '../services/improved_sync_service.dart';
 import '../utils/simplified_logger.dart';
 import '../utils/battery_optimization_helper.dart';
 import '../utils/android_permission_helper.dart';
+import '../utils/usage_stats_helper.dart';
 import 'idle_detection_service.dart';
 import 'sync_coordinator.dart';
 
@@ -228,6 +229,7 @@ class PersistentTrackerService {
     }
   }
 
+
   /// Check service status and get current data
   static Future<Map<String, dynamic>> getServiceStatus() async {
     try {
@@ -375,20 +377,23 @@ class PersistentTrackerService {
       }
     }
 
-    // Request USAGE_STATS permission (optional, for enhanced screen state detection)
-    // Note: This is handled by the screen_state plugin, but we provide guidance
+    // Check USAGE_STATS permission status and set pending flag if needed
+    // Note: We don't auto-request here - user will be prompted after login
     if (Platform.isAndroid) {
       try {
         print('📱 Checking USAGE_STATS permission...');
-        final usageStatsGranted = await AndroidPermissionHelper.requestUsageStatsPermission();
-        if (usageStatsGranted) {
-          print('✅ USAGE_STATS permission request launched');
+        final status = await UsageStatsHelper.getUsageStatsStatus();
+        if (status.isGranted) {
+          print('✅ UsageStats permission granted - per-app tracking enabled');
         } else {
-          print('⚠️ Failed to launch USAGE_STATS permission settings');
-          print('💡 Screen state detection may work without USAGE_STATS on some devices');
+          print('⚠️ UsageStats permission not granted - will prompt user after login');
+          // Set pending flag to show dialog after login
+          await UsageStatsHelper.setPromptPending();
         }
       } catch (e) {
-        print('⚠️ Error requesting USAGE_STATS permission: $e');
+        print('⚠️ Error checking UsageStats permission: $e');
+        // Set pending flag anyway to ensure user sees the prompt
+        await UsageStatsHelper.setPromptPending();
       }
     }
 
@@ -469,6 +474,7 @@ class PersistentTrackerService {
   static Future<void> _updateUserActivity(_ServiceData serviceData) async {
     serviceData.isUserActive = await _isUserActive(serviceData);
   }
+
 
   /// Background service entry point (runs in isolate)
   @pragma('vm:entry-point')
@@ -556,7 +562,8 @@ class PersistentTrackerService {
       }
     }
 
-    // Periodic tasks (every 15 seconds) - for real-time updates
+
+    // Periodic tasks (every 1 minute) - for real-time updates
     Timer.periodic(_periodicTaskInterval, (timer) async {
       try {
 
@@ -738,6 +745,7 @@ class PersistentTrackerService {
         print('❌ Error handling reload_today_data: $e');
       }
     });
+
   }
 
   /// Load today's total screen time from database
@@ -906,7 +914,6 @@ class PersistentTrackerService {
       print('💾 Saved individual session: ${(sessionSeconds/60).round()}m → saved ${savedMinutes}m');
     }
     
-
 
     // Reset the session store
     serviceData.screenOnTime = null;

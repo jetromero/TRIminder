@@ -37,6 +37,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         flutterEngine.plugins.add(IdleDetectionPlugin())
+        flutterEngine.plugins.add(UsageStatsPlugin())
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.triminder/settings").setMethodCallHandler { call, result ->
             when (call.method) {
                 "openAppDetailsSettings" -> {

@@ -7,6 +7,7 @@ import '../../services/password_reset_service.dart';
 import '../../services/user_session_manager.dart';
 import '../../utils/responsive_utils.dart';
 import '../../utils/auth_error_handler.dart';
+import '../../utils/usage_stats_helper.dart';
 import 'signup_screen.dart';
 import '../dashboard/home_screen.dart';
 
@@ -59,6 +60,13 @@ class _LoginScreenState extends State<LoginScreen> {
           // Check if user signed up today (new user)
           final user = response.user!;
           final isNewUser = DateTime.now().difference(DateTime.parse(user.createdAt)).inDays == 0;
+          
+          // Set UsageStats permission prompt as pending (will show after navigation)
+          // Only prompt if permission is not already granted
+          final hasUsageStatsPermission = await UsageStatsHelper.isUsageStatsPermissionGranted();
+          if (!hasUsageStatsPermission) {
+            await UsageStatsHelper.setPromptPending();
+          }
           
           // Navigate to home
           Navigator.of(context).pushReplacement(

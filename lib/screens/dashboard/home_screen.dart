@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../auth/login_screen.dart';
@@ -22,8 +23,11 @@ import '../../utils/simplified_logger.dart';
 import '../../widgets/app_scaffold.dart';
 import '../../utils/app_hibernation_helper.dart';
 import '../../utils/battery_optimization_helper.dart';
+import '../../utils/usage_stats_helper.dart';
 import '../../widgets/profile/avatar_widget.dart';
 import '../profile/student_profile_screen.dart';
+import '../../models/app_usage_models.dart';
+import '../../services/usage_stats_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isNewUser;
@@ -103,6 +107,17 @@ class _HomeScreenState extends State<HomeScreen> {
             if (batteryPending) {
               // showBatteryOptimizationDialog already clears the pending flag internally
               await BatteryOptimizationHelper.showBatteryOptimizationDialog(context);
+              // Wait a bit before showing next dialog
+              await Future.delayed(const Duration(milliseconds: 300));
+            }
+          }
+          
+          if (mounted) {
+            // Finally check UsageStats permission (for per-app tracking)
+            final usageStatsPending = await UsageStatsHelper.isPromptPending();
+            if (usageStatsPending) {
+              // showUsageStatsDialog already clears the pending flag internally
+              await UsageStatsHelper.showUsageStatsDialog(context);
             }
           }
         }
@@ -170,6 +185,7 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   bool _isOffline = false;
   late AutomaticScreenTracker _automaticTracker;
   Timer? _refreshTimer;
+  final GlobalKey<_TopOffendersCardState> _topOffendersKey = GlobalKey<_TopOffendersCardState>();
 
   @override
   void initState() {
@@ -432,6 +448,9 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
       // Recent Badges
       const RecentBadgesCard(),
       
+      // Top Offenders List (App Usage)
+      TopOffendersCard(key: _topOffendersKey),
+      
       // Sync Status (for monitoring data sync)
       const SyncStatusWidget(),
       
@@ -656,6 +675,8 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
               final coordinator = SyncCoordinator();
               coordinator.requestSync(() => ImprovedSyncService().performSync());
               await _automaticTracker.refreshTodayData();
+              // Refresh top offenders list (queries UsageStats directly - always fresh)
+              _topOffendersKey.currentState?.refresh();
               if (mounted) setState(() {});
             },
             child: Center(
@@ -1104,6 +1125,474 @@ class RecentBadgesCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class TopOffendersCard extends StatefulWidget {
+  const TopOffendersCard({super.key});
+
+  @override
+  State<TopOffendersCard> createState() => _TopOffendersCardState();
+}
+
+class _TopOffendersCardState extends State<TopOffendersCard> {
+  List<AppUsageEntry> _topApps = [];
+  Map<String, String?> _appIcons = {}; // Cache app icons: packageName -> base64
+  bool _isLoading = true;
+  bool _hasPermission = false;
+  bool _hasData = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTopApps();
+  }
+
+  void refresh() {
+    _loadTopApps();
+  }
+
+  Future<void> _loadTopApps() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Check if UsageStats permission is granted
+      final hasPermission = await UsageStatsHelper.isUsageStatsPermissionGranted();
+      
+      if (!hasPermission) {
+        if (mounted) {
+          setState(() {
+            _hasPermission = false;
+            _isLoading = false;
+            _hasData = false;
+          });
+        }
+        return;
+      }
+
+      _hasPermission = true;
+
+      // Get current user ID (needed for AppUsageEntry model)
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _hasData = false;
+          });
+        }
+        return;
+      }
+
+      // Get today's date
+      final today = DateTime.now();
+      
+      // Query UsageStats directly for today's app usage (fresh data)
+      final usageMap = await UsageStatsService.getAppUsageForDate(today);
+      
+      // Convert to AppUsageEntry list
+      final topApps = <AppUsageEntry>[];
+      
+      for (final entry in usageMap.entries) {
+        final packageName = entry.key;
+        final usageMinutes = entry.value;
+        
+        if (usageMinutes <= 0) continue;
+        
+        // Get app name
+        final appName = await UsageStatsService.getAppName(packageName);
+        
+        topApps.add(AppUsageEntry(
+          userId: userId,
+          packageName: packageName,
+          appName: appName,
+          usageMinutes: usageMinutes,
+          date: today,
+          createdAt: DateTime.now(),
+        ));
+      }
+      
+      // Sort by usage minutes (descending) and take top 10
+      topApps.sort((a, b) => b.usageMinutes.compareTo(a.usageMinutes));
+      final top10Apps = topApps.take(10).toList();
+
+      // Load app icons for top apps
+      final iconMap = <String, String?>{};
+      for (final app in top10Apps) {
+        try {
+          final iconBase64 = await UsageStatsService.getAppIconBase64(app.packageName);
+          iconMap[app.packageName] = iconBase64;
+        } catch (e) {
+          print('Error loading icon for ${app.packageName}: $e');
+          iconMap[app.packageName] = null;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _topApps = top10Apps;
+          _appIcons = iconMap;
+          _hasData = top10Apps.isNotEmpty;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading top apps: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasData = false;
+        });
+      }
+    }
+  }
+
+  String _formatDuration(int minutes) {
+    if (minutes < 60) {
+      return '${minutes}m';
+    }
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    if (mins == 0) {
+      return '${hours}h';
+    }
+    return '${hours}h ${mins}m';
+  }
+
+  Widget _buildAppIcon(BuildContext context, String packageName) {
+    final iconBase64 = _appIcons[packageName];
+    final iconSize = ResponsiveUtils.getIconSize(context, mobile: 36, tablet: 40, desktop: 44);
+    
+    if (iconBase64 != null && iconBase64.isNotEmpty) {
+      try {
+        final bytes = base64Decode(iconBase64);
+        return Container(
+          width: iconSize,
+          height: iconSize,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.memory(
+              bytes,
+              width: iconSize,
+              height: iconSize,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return _buildPlaceholderIcon(context, iconSize);
+              },
+            ),
+          ),
+        );
+      } catch (e) {
+        print('Error decoding app icon for $packageName: $e');
+        return _buildPlaceholderIcon(context, iconSize);
+      }
+    }
+    
+    return _buildPlaceholderIcon(context, iconSize);
+  }
+
+  Widget _buildPlaceholderIcon(BuildContext context, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(
+        Icons.apps,
+        size: size * 0.55,
+        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fontScale = ResponsiveUtils.getFontScale(context);
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(ResponsiveUtils.getSpacing(context, mobile: 16, tablet: 20, desktop: 24)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Top Apps',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 20) * fontScale,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const Spacer(),
+                if (!_hasPermission)
+                  IconButton(
+                    icon: Icon(
+                      Icons.info_outline,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                    ),
+                    onPressed: () => _showPermissionInfo(context),
+                    tooltip: 'Enable app usage tracking',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+              ],
+            ),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 20, tablet: 24, desktop: 28)),
+            
+            if (_isLoading)
+              Center(
+                child: Padding(
+                  padding: EdgeInsets.all(ResponsiveUtils.getSpacing(context, mobile: 24, tablet: 32, desktop: 40)),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
+                  ),
+                ),
+              )
+            else if (!_hasPermission)
+              _buildPermissionPrompt(context, fontScale)
+            else if (!_hasData)
+              _buildNoDataMessage(context, fontScale)
+            else
+              _buildAppList(context, fontScale),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPermissionPrompt(BuildContext context, double fontScale) {
+    return InkWell(
+      onTap: () => _showPermissionInfo(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: EdgeInsets.all(ResponsiveUtils.getSpacing(context, mobile: 16, tablet: 20, desktop: 24)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.insights_outlined,
+                color: Theme.of(context).colorScheme.primary,
+                size: 20,
+              ),
+            ),
+            SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Enable App Usage Tracking',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: (Theme.of(context).textTheme.titleSmall?.fontSize ?? 14) * fontScale,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'See which apps you use most',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                      fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios,
+              size: 16,
+              color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoDataMessage(BuildContext context, double fontScale) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: ResponsiveUtils.getSpacing(context, mobile: 24, tablet: 32, desktop: 48)),
+      child: Center(
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.phone_android_outlined,
+                size: 32,
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+              ),
+            ),
+            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 16, tablet: 20, desktop: 24)),
+            Text(
+              'No usage data',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                fontSize: (Theme.of(context).textTheme.titleSmall?.fontSize ?? 14) * fontScale,
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Start using apps to see your top offenders',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAppList(BuildContext context, double fontScale) {
+    return Column(
+      children: _topApps.asMap().entries.map((entry) {
+        final index = entry.key;
+        final app = entry.value;
+        final rank = index + 1;
+        final isTopThree = rank <= 3;
+        
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16),
+          ),
+          child: Row(
+            children: [
+              // Minimal rank indicator
+              SizedBox(
+                width: 24,
+                child: Text(
+                  '$rank',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: isTopThree ? FontWeight.w600 : FontWeight.w500,
+                    fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                    color: isTopThree 
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                    letterSpacing: -0.5,
+                  ),
+                  textAlign: TextAlign.left,
+                ),
+              ),
+              SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
+              
+              // App icon
+              _buildAppIcon(context, app.packageName),
+              SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
+              
+              // App name and usage
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      app.appName ?? app.packageName,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w500,
+                        fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
+                        letterSpacing: -0.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      _formatDuration(app.usageMinutes),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                        fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  void _showPermissionInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('App Usage Tracking'),
+        content: const Text(
+          'To see which apps you use most, TRIminder needs Usage Access permission.\n\n'
+          'This enables the "Top Offenders List" feature to help you understand your digital habits.\n\n'
+          'Your app usage data stays on your device and is never synced to the cloud.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              final launched = await UsageStatsHelper.requestUsageStatsPermission();
+              if (!launched && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Could not open settings. Please enable Usage Access manually in Settings → Apps → Special app access → Usage access'),
+                    duration: Duration(seconds: 5),
+                  ),
+                );
+              } else {
+                // Reload data after permission is potentially granted
+                await Future.delayed(const Duration(milliseconds: 500));
+                _loadTopApps();
+              }
+            },
+            child: const Text('Enable'),
+          ),
+        ],
       ),
     );
   }

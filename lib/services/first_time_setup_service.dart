@@ -5,6 +5,7 @@ import 'dart:io';
 import '../utils/battery_optimization_helper.dart';
 import '../utils/android_permission_helper.dart';
 import '../utils/app_hibernation_helper.dart';
+import '../utils/usage_stats_helper.dart';
 
 /// Service to handle first-time setup and automatic background configuration
 class FirstTimeSetupService {
@@ -120,18 +121,23 @@ class FirstTimeSetupService {
         }
       }
 
-      // Request USAGE_STATS permission (optional, for enhanced screen state detection)
+      // Check USAGE_STATS permission status and set pending flag if needed
+      // Note: We don't auto-request here - user will be prompted after login
       if (Platform.isAndroid) {
         try {
           print('📱 Checking USAGE_STATS permission...');
-          final usageStatsGranted = await AndroidPermissionHelper.requestUsageStatsPermission();
-          if (usageStatsGranted) {
-            print('✅ USAGE_STATS permission request launched');
+          final status = await UsageStatsHelper.getUsageStatsStatus();
+          if (status.isGranted) {
+            print('✅ UsageStats permission granted - per-app tracking enabled');
           } else {
-            print('⚠️ Failed to launch USAGE_STATS permission settings');
+            print('⚠️ UsageStats permission not granted - will prompt user after login');
+            // Set pending flag to show dialog after login
+            await UsageStatsHelper.setPromptPending();
           }
         } catch (e) {
-          print('⚠️ Error requesting USAGE_STATS permission: $e');
+          print('⚠️ Error checking UsageStats permission: $e');
+          // Set pending flag anyway to ensure user sees the prompt
+          await UsageStatsHelper.setPromptPending();
         }
       }
 

@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:io';
 import '../utils/battery_optimization_helper.dart';
 import '../utils/app_hibernation_helper.dart';
+import '../utils/usage_stats_helper.dart';
 
 /// Widget that displays permission status and provides management options
 class PermissionStatusWidget extends StatefulWidget {
@@ -73,8 +74,12 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
     // Check app hibernation status (Android 12+). Informational only.
     final appHibernationStatus = await AppHibernationHelper.getAppHibernationStatus();
     
+    // Check UsageStats permission (for per-app tracking)
+    final usageStatsStatus = await UsageStatsHelper.getUsageStatsStatus();
+    
     // Has issues if battery optimization is not bypassed or permissions not granted.
     // App hibernation is informational only and does not affect overall "hasIssues".
+    // UsageStats is optional (for per-app tracking) so it doesn't affect "hasIssues".
     final hasPermissionIssues = permissions.values.any((status) => status != PermissionStatus.granted);
     final hasIssues = !batteryOptimized || hasPermissionIssues;
     
@@ -83,6 +88,7 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
       batteryOptimized: batteryOptimized,
       batteryStatus: batteryStatus,
       appHibernationStatus: appHibernationStatus,
+      usageStatsStatus: usageStatsStatus,
       hasIssues: hasIssues,
     );
   }
@@ -192,6 +198,20 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
             description: _statusInfo!.permissions[Permission.notification] == PermissionStatus.granted
                 ? 'Foreground service notifications enabled'
                 : 'Required for background service',
+          ),
+        ],
+        
+        // UsageStats permission status (optional, for per-app tracking)
+        if (Platform.isAndroid) ...[
+          const SizedBox(height: 8),
+          _buildPermissionItem(
+            icon: Icons.apps,
+            title: 'App Usage Tracking',
+            status: _statusInfo!.usageStatsStatus.isGranted,
+            description: _statusInfo!.usageStatsStatus.isGranted
+                ? 'Per-app usage tracking enabled'
+                : 'Optional: Enables "Top Offenders" feature',
+            onTap: () => _showUsageStatsDialog(),
           ),
         ],
       ],
@@ -309,6 +329,13 @@ class _PermissionStatusWidgetState extends State<PermissionStatusWidget> {
     });
   }
 
+  void _showUsageStatsDialog() {
+    UsageStatsHelper.showUsageStatsDialog(context).then((_) {
+      _loadPermissionStatus();
+      widget.onPermissionChanged?.call();
+    });
+  }
+
   Widget _buildActionButtons() {
     return Row(
       children: [
@@ -409,6 +436,19 @@ class PermissionSetupDialog extends StatelessWidget {
                 description: 'Required for the foreground service that tracks your screen time.',
                 isGranted: statusInfo.permissions[Permission.notification] == PermissionStatus.granted,
                 onFix: () => _fixNotificationPermission(context),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            // UsageStats permission section (optional)
+            if (Platform.isAndroid) ...[
+              _buildPermissionSection(
+                context,
+                icon: Icons.apps,
+                title: 'App Usage Tracking',
+                description: 'Optional: Enables per-app usage tracking to show which apps you use most. This data stays on your device.',
+                isGranted: statusInfo.usageStatsStatus.isGranted,
+                onFix: () => _fixUsageStatsPermission(context),
               ),
             ],
           ],
@@ -550,6 +590,20 @@ class PermissionSetupDialog extends StatelessWidget {
     }
   }
 
+  Future<void> _fixUsageStatsPermission(BuildContext context) async {
+    try {
+      await UsageStatsHelper.showUsageStatsDialog(context);
+      onPermissionChanged?.call();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _fixAllPermissions(BuildContext context) async {
     // Fix battery optimization
     await _fixBatteryOptimization(context);
@@ -563,6 +617,8 @@ class PermissionSetupDialog extends StatelessWidget {
     if (Platform.isAndroid) {
       await _fixNotificationPermission(context);
     }
+    
+    // Note: UsageStats is optional, so we don't force it in "Fix All"
   }
 }
 
@@ -572,6 +628,7 @@ class PermissionStatusInfo {
   final bool batteryOptimized;
   final BatteryOptimizationStatus batteryStatus;
   final AppHibernationStatus appHibernationStatus;
+  final UsageStatsStatus usageStatsStatus;
   final bool hasIssues;
 
   PermissionStatusInfo({
@@ -579,6 +636,7 @@ class PermissionStatusInfo {
     required this.batteryOptimized,
     required this.batteryStatus,
     required this.appHibernationStatus,
+    required this.usageStatsStatus,
     required this.hasIssues,
   });
 }

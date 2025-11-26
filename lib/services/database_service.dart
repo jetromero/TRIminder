@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
+import '../models/app_usage_models.dart';
 import '../utils/app_logger.dart';
 
 class DatabaseService {
@@ -140,12 +141,28 @@ class DatabaseService {
       )
     ''');
 
+    // App usage logs table (local-only, no cloud sync)
+    await db.execute('''
+      CREATE TABLE app_usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId TEXT NOT NULL,
+        packageName TEXT NOT NULL,
+        appName TEXT,
+        usageMinutes INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY (userId) REFERENCES user_profiles (id),
+        UNIQUE(userId, packageName, date)
+      )
+    ''');
+
     // Add performance indexes
     await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
     await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
     await db.execute('CREATE INDEX idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
     await db.execute('CREATE INDEX idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
     await db.execute('CREATE INDEX idx_xp_award_history_synced ON xp_award_history(isSynced)');
+    await db.execute('CREATE INDEX idx_app_usage_user_date ON app_usage_logs(userId, date)');
   }
 
   /// Apply lightweight migrations on open
@@ -329,6 +346,31 @@ class DatabaseService {
           name TEXT NOT NULL
         )
       ''');
+      
+      // Ensure app_usage_logs table exists (migration for existing databases)
+      try {
+        final appUsageTableInfo = await db.rawQuery('PRAGMA table_info(app_usage_logs)');
+        if (appUsageTableInfo.isEmpty) {
+          print('🔄 Creating app_usage_logs table...');
+          await db.execute('''
+            CREATE TABLE app_usage_logs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              userId TEXT NOT NULL,
+              packageName TEXT NOT NULL,
+              appName TEXT,
+              usageMinutes INTEGER NOT NULL,
+              date TEXT NOT NULL,
+              createdAt TEXT NOT NULL,
+              FOREIGN KEY (userId) REFERENCES user_profiles (id),
+              UNIQUE(userId, packageName, date)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_app_usage_user_date ON app_usage_logs(userId, date)');
+          print('✅ app_usage_logs table created');
+        }
+      } catch (e) {
+        print('⚠️ Error creating app_usage_logs table: $e');
+      }
       
       // Add unique constraint to prevent duplicate screen time entries
       await db.execute(
@@ -859,6 +901,159 @@ class DatabaseService {
   /// Save last cloud sync timestamp
   Future<void> saveLastCloudSyncTimestamp(DateTime timestamp) async {
     await setSyncMetadata('last_cloud_sync', timestamp.toIso8601String());
+  }
+
+  // ============================================
+  // App Usage Logs Methods (Local-only storage)
+  // ============================================
+
+  /// Insert or update app usage entry
+  /// Uses INSERT OR REPLACE to handle unique constraint (userId, packageName, date)
+  Future<int> insertAppUsageEntry(AppUsageEntry entry) async {
+    try {
+      final db = await database;
+      final result = await db.insert(
+        'app_usage_logs',
+        entry.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      return result;
+    } catch (e) {
+      print('❌ Error inserting app usage entry: $e');
+      rethrow;
+    }
+  }
+
+  /// Insert or update multiple app usage entries in a batch
+  Future<void> insertAppUsageEntries(List<AppUsageEntry> entries) async {
+    if (entries.isEmpty) return;
+    
+    try {
+      final db = await database;
+      final batch = db.batch();
+      
+      for (final entry in entries) {
+        batch.insert(
+          'app_usage_logs',
+          entry.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      
+      await batch.commit(noResult: true);
+    } catch (e) {
+      print('❌ Error inserting app usage entries: $e');
+      rethrow;
+    }
+  }
+
+  /// Get app usage entries for a specific date
+  Future<List<AppUsageEntry>> getAppUsageForDate(String userId, DateTime date) async {
+    try {
+      final db = await database;
+      final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD
+      
+      final maps = await db.query(
+        'app_usage_logs',
+        where: 'userId = ? AND date = ?',
+        whereArgs: [userId, dateStr],
+        orderBy: 'usageMinutes DESC',
+      );
+      
+      return maps.map((map) => AppUsageEntry.fromMap(map)).toList();
+    } catch (e) {
+      print('❌ Error getting app usage for date: $e');
+      return [];
+    }
+  }
+
+  /// Get top N apps by usage for a specific date
+  Future<List<AppUsageEntry>> getTopAppsForDate(
+    String userId,
+    DateTime date,
+    int limit,
+  ) async {
+    try {
+      final db = await database;
+      final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD
+      
+      final maps = await db.query(
+        'app_usage_logs',
+        where: 'userId = ? AND date = ?',
+        whereArgs: [userId, dateStr],
+        orderBy: 'usageMinutes DESC',
+        limit: limit,
+      );
+      
+      return maps.map((map) => AppUsageEntry.fromMap(map)).toList();
+    } catch (e) {
+      print('❌ Error getting top apps for date: $e');
+      return [];
+    }
+  }
+
+  /// Get app usage entries for a date range
+  Future<List<AppUsageEntry>> getAppUsageForDateRange(
+    String userId,
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    try {
+      final db = await database;
+      final startStr = startDate.toIso8601String().split('T')[0];
+      final endStr = endDate.toIso8601String().split('T')[0];
+      
+      final maps = await db.query(
+        'app_usage_logs',
+        where: 'userId = ? AND date >= ? AND date <= ?',
+        whereArgs: [userId, startStr, endStr],
+        orderBy: 'date DESC, usageMinutes DESC',
+      );
+      
+      return maps.map((map) => AppUsageEntry.fromMap(map)).toList();
+    } catch (e) {
+      print('❌ Error getting app usage for date range: $e');
+      return [];
+    }
+  }
+
+  /// Get app usage entry by package name and date
+  Future<AppUsageEntry?> getAppUsageEntry(
+    String userId,
+    String packageName,
+    DateTime date,
+  ) async {
+    try {
+      final db = await database;
+      final dateStr = date.toIso8601String().split('T')[0];
+      
+      final maps = await db.query(
+        'app_usage_logs',
+        where: 'userId = ? AND packageName = ? AND date = ?',
+        whereArgs: [userId, packageName, dateStr],
+        limit: 1,
+      );
+      
+      if (maps.isEmpty) return null;
+      return AppUsageEntry.fromMap(maps.first);
+    } catch (e) {
+      print('❌ Error getting app usage entry: $e');
+      return null;
+    }
+  }
+
+  /// Delete app usage entries for a user (for cleanup)
+  Future<void> deleteAppUsageEntries(String userId) async {
+    try {
+      final db = await database;
+      await db.delete(
+        'app_usage_logs',
+        where: 'userId = ?',
+        whereArgs: [userId],
+      );
+    } catch (e) {
+      print('❌ Error deleting app usage entries: $e');
+    }
   }
 
   Future<void> closeDatabase() async {

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../services/usage_stats_service.dart';
 
 /// Helper class for handling Android-specific permissions that require special handling
 /// Includes exact alarms (Android 12+) and USAGE_STATS (all versions)
@@ -76,17 +77,12 @@ class AndroidPermissionHelper {
   }
 
   /// Check if USAGE_STATS permission is granted
-  /// This requires checking UsageStatsManager.isAppInactive() or similar
-  /// For now, we provide a helper to check and request
+  /// Uses UsageStatsService to check permission status
   static Future<bool> isUsageStatsPermissionGranted() async {
     if (!Platform.isAndroid) return false;
     
     try {
-      // USAGE_STATS is a protected permission that requires manual grant via Settings
-      // We can't directly check it via permission_handler
-      // The screen_state plugin should handle this, but we provide a helper for guidance
-      // Return false to prompt user to check/request it
-      return false;
+      return await UsageStatsService.isPermissionGranted();
     } catch (e) {
       print('Error checking USAGE_STATS permission: $e');
       return false;
@@ -94,24 +90,28 @@ class AndroidPermissionHelper {
   }
 
   /// Request USAGE_STATS permission
-  /// This opens Settings > Apps > Special app access > Usage access
+  /// Launches settings intent for usage access
   static Future<bool> requestUsageStatsPermission() async {
     if (!Platform.isAndroid) return false;
     
     try {
-      // USAGE_STATS permission must be granted via Settings
-      // Open the usage access settings page
-      final uri = Uri.parse('android.settings.USAGE_ACCESS_SETTINGS');
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-      
-      // Fallback: Try to open app settings
-      return await _openAppSettings();
+      return await UsageStatsService.requestPermission();
     } catch (e) {
       print('Error requesting USAGE_STATS permission: $e');
       return false;
     }
+  }
+
+  /// Check and request UsageStats permission if not granted
+  static Future<bool> checkAndRequestUsageStatsPermission() async {
+    if (!Platform.isAndroid) return false;
+    
+    final isGranted = await isUsageStatsPermissionGranted();
+    if (isGranted) {
+      return true;
+    }
+    
+    return await requestUsageStatsPermission();
   }
 
   /// Open app settings page
