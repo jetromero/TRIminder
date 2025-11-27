@@ -151,9 +151,19 @@ class UsageStatsService {
         'getAppName',
         {'packageName': packageName},
       );
-      return appName ?? packageName;
+      
+      // Validate app name is not null, empty, or just the package name
+      if (appName == null || appName.isEmpty || appName == packageName) {
+        print('⚠️ App name retrieval returned invalid value for package: $packageName (got: $appName)');
+        return packageName;
+      }
+      
+      return appName;
+    } on PlatformException catch (e) {
+      print('❌ Platform error getting app name for $packageName: ${e.code} - ${e.message}');
+      return packageName;
     } catch (e) {
-      print('Error getting app name: $e');
+      print('❌ Error getting app name for $packageName: $e');
       return packageName;
     }
   }
@@ -166,9 +176,18 @@ class UsageStatsService {
         'getAppIconBase64',
         {'packageName': packageName},
       );
+      
+      if (iconBase64 == null || iconBase64.isEmpty) {
+        print('⚠️ App icon retrieval returned null/empty for package: $packageName');
+        return null;
+      }
+      
       return iconBase64;
+    } on PlatformException catch (e) {
+      print('❌ Platform error getting app icon for $packageName: ${e.code} - ${e.message}');
+      return null;
     } catch (e) {
-      print('Error getting app icon: $e');
+      print('❌ Error getting app icon for $packageName: $e');
       return null;
     }
   }

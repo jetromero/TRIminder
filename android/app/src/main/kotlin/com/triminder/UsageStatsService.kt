@@ -7,14 +7,18 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.ResolveInfo
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.content.pm.PackageInfo
 import android.os.Build
 import android.os.UserManager
 import android.util.Base64
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -27,6 +31,49 @@ class UsageStatsService(private val context: Context) {
     }
     
     private val packageManager: PackageManager = context.packageManager
+    
+    // LauncherApps API for Android 5.0+ (alternative method for app info)
+    private val launcherApps: LauncherApps? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+        } else {
+            null
+        }
+    }
+    
+    // Cache for launchable apps (queryIntentActivities result)
+    private var cachedLaunchableApps: Map<String, ResolveInfo>? = null
+    private var cacheTimestamp: Long = 0
+    private val CACHE_DURATION_MS = 60000L // Cache for 1 minute
+    
+    /**
+     * Get cached or fresh list of launchable apps
+     */
+    private fun getLaunchableApps(): Map<String, ResolveInfo> {
+        val now = System.currentTimeMillis()
+        if (cachedLaunchableApps != null && (now - cacheTimestamp) < CACHE_DURATION_MS) {
+            return cachedLaunchableApps!!
+        }
+        
+        return try {
+            val intent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+            
+            // Query all apps that can be launched (no flags needed - queryIntentActivities doesn't use PackageManager flags)
+            val resolveInfoList: List<ResolveInfo> = packageManager.queryIntentActivities(intent, 0)
+            val map = resolveInfoList.associateBy { it.activityInfo?.packageName ?: "" }
+                .filterKeys { it.isNotEmpty() }
+            
+            cachedLaunchableApps = map
+            cacheTimestamp = now
+            Log.w("UsageStatsService", "📦 Cached ${map.size} launchable apps (looking for: ${context.packageName})")
+            map
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Error querying launchable apps: ${e.message}")
+            emptyMap()
+        }
+    }
     
     /**
      * Check if PACKAGE_USAGE_STATS permission is granted
@@ -184,52 +231,650 @@ class UsageStatsService(private val context: Context) {
     }
     
     /**
+     * Try to get ApplicationInfo using QUERY_ALL_PACKAGES permission (Android 11+)
+     * This is the simplest and most reliable method when QUERY_ALL_PACKAGES permission is available
+     * Returns ApplicationInfo if successful, null otherwise
+     */
+    private fun tryGetAppInfoWithQueryAllPackages(packageName: String): ApplicationInfo? {
+        // Only works on Android 11+ (API 30+) with QUERY_ALL_PACKAGES permission
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return null
+        }
+        
+        return try {
+            // With QUERY_ALL_PACKAGES permission, we can use simple flags (0)
+            val applicationInfo = packageManager.getApplicationInfo(packageName, 0)
+            Log.d("UsageStatsService", "✅ Successfully retrieved ApplicationInfo for $packageName using QUERY_ALL_PACKAGES")
+            applicationInfo
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.d("UsageStatsService", "Package not found with QUERY_ALL_PACKAGES: $packageName")
+            null
+        } catch (e: SecurityException) {
+            Log.d("UsageStatsService", "Security exception with QUERY_ALL_PACKAGES for $packageName: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.d("UsageStatsService", "Exception with QUERY_ALL_PACKAGES for $packageName: ${e.javaClass.simpleName} - ${e.message}")
+            null
+        }
+    }
+    
+    /**
      * Get app name from package name
+     * Uses QUERY_ALL_PACKAGES permission as primary strategy for Android 11+, with fallback strategies for compatibility
      */
     fun getAppName(packageName: String): String {
+        Log.w("UsageStatsService", "🔍 Starting app name retrieval for: $packageName")
+        
+        // PRIORITY: Strategy 1 - Try QUERY_ALL_PACKAGES first (Android 11+)
+        // This is the simplest and most reliable method when the permission is available
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val appInfo = tryGetAppInfoWithQueryAllPackages(packageName)
+            if (appInfo != null) {
+                try {
+                    val appLabel = packageManager.getApplicationLabel(appInfo)
+                    if (appLabel != null && appLabel.toString().isNotEmpty() && appLabel.toString() != packageName) {
+                        Log.w("UsageStatsService", "✅ SUCCESS: Retrieved app name for $packageName using QUERY_ALL_PACKAGES: ${appLabel.toString()}")
+                        return appLabel.toString()
+                    }
+                } catch (e: Exception) {
+                    Log.d("UsageStatsService", "Failed to get label from ApplicationInfo: ${e.message}")
+                }
+            }
+            Log.w("UsageStatsService", "❌ Strategy 1 (QUERY_ALL_PACKAGES) failed for $packageName, trying fallbacks...")
+        }
+        
+        // Fallback strategies for Android 10 and below, or if QUERY_ALL_PACKAGES failed
+        // Strategy 2: Try queryIntentActivities (bypasses package visibility restrictions)
+        var result = tryGetAppNameViaQueryIntent(packageName)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using QueryIntent: $result")
+            return result
+        }
+        
+        // Strategy 3: Try using resolveActivity with MAIN/LAUNCHER intent
+        result = tryGetAppNameViaIntent(packageName)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using Intent: $result")
+            return result
+        }
+        
+        // Strategy 4: Try with version-specific flags
+        result = tryGetAppNameWithFlags(packageName, getVersionSpecificFlags())
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using version-specific flags: $result")
+            return result
+        }
+        
+        // Strategy 5: Try with MATCH_ANY_USER flag (Android 11+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            result = tryGetAppNameWithFlags(packageName, 0x00200000) // MATCH_ANY_USER
+            if (result != null && result != packageName && result.isNotEmpty()) {
+                Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using MATCH_ANY_USER: $result")
+                return result
+            }
+        }
+        
+        // Strategy 6: Try with MATCH_UNINSTALLED_PACKAGES flag (Android 6.0-10)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            try {
+                @Suppress("DEPRECATION")
+                val flags = PackageManager.MATCH_UNINSTALLED_PACKAGES
+                result = tryGetAppNameWithFlags(packageName, flags)
+                if (result != null && result != packageName && result.isNotEmpty()) {
+                    Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using MATCH_UNINSTALLED_PACKAGES: $result")
+                    return result
+                }
+            } catch (e: Exception) {
+                Log.w("UsageStatsService", "Failed to get app name with MATCH_UNINSTALLED_PACKAGES: ${e.message}")
+            }
+        }
+        
+        // Strategy 7: Try with default flags (no special flags)
+        result = tryGetAppNameWithFlags(packageName, 0)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using default flags: $result")
+            return result
+        }
+        
+        // Strategy 8: Try using getPackageInfo as alternative approach
+        result = tryGetAppNameViaPackageInfo(packageName)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using PackageInfo: $result")
+            return result
+        }
+        
+        // Strategy 9: Try using GET_META_DATA flag
+        result = tryGetAppNameAlternative(packageName)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using alternative method: $result")
+            return result
+        }
+        
+        // Strategy 10: Try using LauncherApps API (Android 5.0+)
+        result = tryGetAppNameViaLauncherApps(packageName)
+        if (result != null && result != packageName && result.isNotEmpty()) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved app name for $packageName using LauncherApps: $result")
+            return result
+        }
+        
+        Log.e("UsageStatsService", "❌❌❌ ALL STRATEGIES FAILED for $packageName - returning package name as fallback")
+        return packageName
+    }
+    
+    /**
+     * Try to get app name using specific flags
+     */
+    private fun tryGetAppNameWithFlags(packageName: String, flags: Int): String? {
         return try {
-            val applicationInfo: ApplicationInfo = packageManager.getApplicationInfo(packageName, 0)
-            packageManager.getApplicationLabel(applicationInfo).toString()
+            val applicationInfo: ApplicationInfo = packageManager.getApplicationInfo(packageName, flags)
+            val appLabel = packageManager.getApplicationLabel(applicationInfo)
+            
+            if (appLabel == null || appLabel.toString().isEmpty() || appLabel.toString() == packageName) {
+                Log.d("UsageStatsService", "App label invalid for $packageName: label=$appLabel")
+                return null
+            }
+            
+            val labelStr = appLabel.toString()
+            Log.d("UsageStatsService", "Successfully got app name for $packageName: $labelStr (flags=0x${flags.toString(16)})")
+            return labelStr
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.d("UsageStatsService", "Package not found: $packageName (flags=0x${flags.toString(16)})")
+            null // Package not found, try next strategy
+        } catch (e: SecurityException) {
+            Log.d("UsageStatsService", "Security exception for $packageName (flags=0x${flags.toString(16)}): ${e.message}")
+            null // Security restriction, try next strategy
         } catch (e: Exception) {
-            packageName
+            Log.d("UsageStatsService", "Exception getting app name for $packageName (flags=0x${flags.toString(16)}): ${e.javaClass.simpleName} - ${e.message}")
+            null // Other error, try next strategy
+        }
+    }
+    
+    /**
+     * Try to get app name using PackageInfo (alternative approach)
+     */
+    private fun tryGetAppNameViaPackageInfo(packageName: String): String? {
+        return try {
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                0x00200000 // MATCH_ANY_USER
+            } else {
+                0
+            }
+            
+            val packageInfo: PackageInfo = packageManager.getPackageInfo(packageName, flags)
+            val applicationInfo = packageInfo.applicationInfo
+            
+            // Check if applicationInfo is null
+            if (applicationInfo == null) {
+                return null
+            }
+            
+            val appLabel = packageManager.getApplicationLabel(applicationInfo)
+            
+            if (appLabel == null || appLabel.toString().isEmpty() || appLabel.toString() == packageName) {
+                return null
+            }
+            
+            appLabel.toString()
+        } catch (e: Exception) {
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try alternative methods to get app name
+     */
+    private fun tryGetAppNameAlternative(packageName: String): String? {
+        return try {
+            // Try with GET_META_DATA flag combined with version-specific flags
+            val flags = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                    // Android 11+: Combine MATCH_ANY_USER with GET_META_DATA
+                    0x00200000 or PackageManager.GET_META_DATA // MATCH_ANY_USER | GET_META_DATA
+                }
+                else -> {
+                    // Older versions: Use GET_META_DATA
+                    PackageManager.GET_META_DATA
+                }
+            }
+            
+            val applicationInfo: ApplicationInfo = packageManager.getApplicationInfo(packageName, flags)
+            val appLabel = packageManager.getApplicationLabel(applicationInfo)
+            
+            if (appLabel == null || appLabel.toString().isEmpty() || appLabel.toString() == packageName) {
+                return null
+            }
+            
+            appLabel.toString()
+        } catch (e: Exception) {
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try to get app name using LauncherApps API (Android 5.0+)
+     * This is an alternative method that might work better on some devices
+     */
+    private fun tryGetAppNameViaLauncherApps(packageName: String): String? {
+        return try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || launcherApps == null) {
+                return null
+            }
+            
+            // Get application info first
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                0x00200000 // MATCH_ANY_USER
+            } else {
+                0
+            }
+            
+            val applicationInfo: ApplicationInfo = packageManager.getApplicationInfo(packageName, flags)
+            val appLabel = packageManager.getApplicationLabel(applicationInfo)
+            
+            if (appLabel == null || appLabel.toString().isEmpty() || appLabel.toString() == packageName) {
+                return null
+            }
+            
+            appLabel.toString()
+        } catch (e: Exception) {
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try to get app name using resolveActivity with MAIN/LAUNCHER intent
+     * This method can sometimes bypass package visibility restrictions
+     */
+    private fun tryGetAppNameViaIntent(packageName: String): String? {
+        return try {
+            // Create intent for main launcher activity
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+            if (intent == null) {
+                Log.d("UsageStatsService", "No launch intent found for $packageName")
+                return null
+            }
+            
+            // Resolve the activity
+            val resolveInfo: ResolveInfo? = packageManager.resolveActivity(intent, 0)
+            if (resolveInfo == null || resolveInfo.activityInfo == null) {
+                Log.d("UsageStatsService", "Could not resolve activity for $packageName")
+                return null
+            }
+            
+            // Get application info from resolved activity
+            val applicationInfo = resolveInfo.activityInfo.applicationInfo
+            val appLabel = packageManager.getApplicationLabel(applicationInfo)
+            
+            if (appLabel == null || appLabel.toString().isEmpty() || appLabel.toString() == packageName) {
+                return null
+            }
+            
+            appLabel.toString()
+        } catch (e: Exception) {
+            Log.d("UsageStatsService", "Exception in tryGetAppNameViaIntent for $packageName: ${e.javaClass.simpleName} - ${e.message}")
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try to get app name by querying all launchable apps
+     * This queries by intent filter, which bypasses package visibility restrictions
+     */
+    private fun tryGetAppNameViaQueryIntent(packageName: String): String? {
+        return try {
+            // Use cached launchable apps for better performance
+            val launchableApps = getLaunchableApps()
+            val resolveInfo = launchableApps[packageName]
+            
+            if (resolveInfo != null && resolveInfo.activityInfo != null) {
+                val applicationInfo = resolveInfo.activityInfo.applicationInfo
+                val appLabel = packageManager.getApplicationLabel(applicationInfo)
+                
+            if (appLabel != null && appLabel.toString().isNotEmpty() && appLabel.toString() != packageName) {
+                Log.w("UsageStatsService", "✅ Found app name via queryIntent: $packageName -> ${appLabel.toString()}")
+                return appLabel.toString()
+            } else {
+                Log.w("UsageStatsService", "⚠️ App label invalid: package=$packageName, label=$appLabel")
+            }
+        } else {
+            Log.w("UsageStatsService", "❌ Package $packageName NOT FOUND in launchable apps cache (${launchableApps.size} apps cached)")
+        }
+            
+            null
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Exception in tryGetAppNameViaQueryIntent for $packageName: ${e.javaClass.simpleName} - ${e.message}")
+            null // Failed, return null
         }
     }
     
     /**
      * Get app icon as base64 encoded PNG
      * Returns null if icon cannot be retrieved
+     * Uses QUERY_ALL_PACKAGES permission as primary strategy for Android 11+, with fallback strategies for compatibility
      */
     fun getAppIconBase64(packageName: String): String? {
+        Log.w("UsageStatsService", "🖼️ Starting icon retrieval for: $packageName")
+        
+        // PRIORITY: Strategy 1 - Try QUERY_ALL_PACKAGES first (Android 11+)
+        // This is the simplest and most reliable method when the permission is available
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val appInfo = tryGetAppInfoWithQueryAllPackages(packageName)
+            if (appInfo != null) {
+                try {
+                    val drawable = packageManager.getApplicationIcon(appInfo)
+                    if (drawable != null) {
+                        val result = convertDrawableToBase64(drawable, packageName)
+                        if (result != null) {
+                            Log.w("UsageStatsService", "✅ SUCCESS: Retrieved icon for $packageName using QUERY_ALL_PACKAGES")
+                            return result
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d("UsageStatsService", "Failed to get icon from ApplicationInfo: ${e.message}")
+                }
+            }
+            Log.w("UsageStatsService", "❌ Strategy 1 (QUERY_ALL_PACKAGES) failed for icon: $packageName, trying fallbacks...")
+        }
+        
+        // Fallback strategies for Android 10 and below, or if QUERY_ALL_PACKAGES failed
+        // Strategy 2: Try queryIntentActivities (bypasses package visibility restrictions)
+        var result = tryGetIconViaQueryIntent(packageName)
+        if (result != null) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using QueryIntent")
+            return result
+        }
+        
+        // Strategy 3: Try using resolveActivity with MAIN/LAUNCHER intent
+        result = tryGetIconViaIntent(packageName)
+        if (result != null) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using Intent")
+            return result
+        }
+        
+        // Strategy 4: Try with version-specific flags (Android 11+)
+        result = tryGetIconWithFlags(packageName, getVersionSpecificFlags())
+        if (result != null) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using version-specific flags")
+            return result
+        }
+        
+        // Strategy 5: Try with MATCH_ANY_USER flag (Android 11+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            result = tryGetIconWithFlags(packageName, 0x00200000) // MATCH_ANY_USER
+            if (result != null) {
+                Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using MATCH_ANY_USER")
+                return result
+            }
+        }
+        
+        // Strategy 6: Try with MATCH_UNINSTALLED_PACKAGES flag (Android 6.0-10)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            try {
+                @Suppress("DEPRECATION")
+                val flags = PackageManager.MATCH_UNINSTALLED_PACKAGES
+                result = tryGetIconWithFlags(packageName, flags)
+                if (result != null) {
+                    Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using MATCH_UNINSTALLED_PACKAGES")
+                    return result
+                }
+            } catch (e: Exception) {
+                Log.w("UsageStatsService", "Failed to get icon with MATCH_UNINSTALLED_PACKAGES: ${e.message}")
+            }
+        }
+        
+        // Strategy 7: Try with default flags (no special flags)
+        result = tryGetIconWithFlags(packageName, 0)
+        if (result != null) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using default flags")
+            return result
+        }
+        
+        // Strategy 8: Try using getPackageInfo as alternative approach
+        result = tryGetIconViaPackageInfo(packageName)
+        if (result != null) {
+            Log.d("UsageStatsService", "✅ Successfully retrieved icon for $packageName using PackageInfo")
+            return result
+        }
+        
+        Log.e("UsageStatsService", "❌❌❌ ALL STRATEGIES FAILED for icon: $packageName - returning null")
+        return null
+    }
+    
+    /**
+     * Get version-specific flags for package queries
+     */
+    private fun getVersionSpecificFlags(): Int {
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                // Android 11+ (API 30+): Use MATCH_ANY_USER
+                0x00200000 // PackageManager.MATCH_ANY_USER
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                // Android 6.0-10 (API 23-29): Use MATCH_UNINSTALLED_PACKAGES
+                @Suppress("DEPRECATION")
+                PackageManager.MATCH_UNINSTALLED_PACKAGES
+            }
+            else -> {
+                // Older versions: Use default flags
+                0
+            }
+        }
+    }
+    
+    /**
+     * Try to get icon using specific flags
+     */
+    private fun tryGetIconWithFlags(packageName: String, flags: Int): String? {
         return try {
-            val applicationInfo = packageManager.getApplicationInfo(packageName, 0)
+            val applicationInfo = packageManager.getApplicationInfo(packageName, flags)
             val drawable = packageManager.getApplicationIcon(applicationInfo)
-            val bitmap = drawableToBitmap(drawable)
-            val outputStream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-            val byteArray = outputStream.toByteArray()
-            Base64.encodeToString(byteArray, Base64.NO_WRAP)
+            
+            if (drawable == null) {
+                Log.d("UsageStatsService", "Drawable is null for $packageName (flags=0x${flags.toString(16)})")
+                return null
+            }
+            
+            val result = convertDrawableToBase64(drawable, packageName)
+            if (result != null) {
+                Log.d("UsageStatsService", "Successfully got icon for $packageName (flags=0x${flags.toString(16)})")
+            }
+            return result
+        } catch (e: PackageManager.NameNotFoundException) {
+            Log.d("UsageStatsService", "Package not found when getting icon: $packageName (flags=0x${flags.toString(16)})")
+            null // Package not found, try next strategy
+        } catch (e: SecurityException) {
+            Log.d("UsageStatsService", "Security exception getting icon for $packageName (flags=0x${flags.toString(16)}): ${e.message}")
+            null // Security restriction, try next strategy
         } catch (e: Exception) {
+            Log.d("UsageStatsService", "Exception getting icon for $packageName (flags=0x${flags.toString(16)}): ${e.javaClass.simpleName} - ${e.message}")
+            null // Other error, try next strategy
+        }
+    }
+    
+    /**
+     * Try to get icon using PackageInfo (alternative approach)
+     */
+    private fun tryGetIconViaPackageInfo(packageName: String): String? {
+        return try {
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                0x00200000 // MATCH_ANY_USER
+            } else {
+                0
+            }
+            
+            val packageInfo: PackageInfo = packageManager.getPackageInfo(packageName, flags)
+            val applicationInfo = packageInfo.applicationInfo
+            
+            // Check if applicationInfo is null
+            if (applicationInfo == null) {
+                return null
+            }
+            
+            val drawable = packageManager.getApplicationIcon(applicationInfo)
+            
+            if (drawable == null) {
+                return null
+            }
+            
+            convertDrawableToBase64(drawable, packageName)
+        } catch (e: Exception) {
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try to get icon using resolveActivity with MAIN/LAUNCHER intent
+     * This method can sometimes bypass package visibility restrictions
+     */
+    private fun tryGetIconViaIntent(packageName: String): String? {
+        return try {
+            // Create intent for main launcher activity
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+            if (intent == null) {
+                Log.d("UsageStatsService", "No launch intent found for icon: $packageName")
+                return null
+            }
+            
+            // Resolve the activity
+            val resolveInfo: ResolveInfo? = packageManager.resolveActivity(intent, 0)
+            if (resolveInfo == null || resolveInfo.activityInfo == null) {
+                Log.d("UsageStatsService", "Could not resolve activity for icon: $packageName")
+                return null
+            }
+            
+            // Get application info from resolved activity
+            val applicationInfo = resolveInfo.activityInfo.applicationInfo
+            val drawable = packageManager.getApplicationIcon(applicationInfo)
+            
+            if (drawable == null) {
+                return null
+            }
+            
+            convertDrawableToBase64(drawable, packageName)
+        } catch (e: Exception) {
+            Log.d("UsageStatsService", "Exception in tryGetIconViaIntent for $packageName: ${e.javaClass.simpleName} - ${e.message}")
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Try to get icon by querying all launchable apps
+     * This queries by intent filter, which bypasses package visibility restrictions
+     */
+    private fun tryGetIconViaQueryIntent(packageName: String): String? {
+        return try {
+            // Use cached launchable apps for better performance
+            val launchableApps = getLaunchableApps()
+            val resolveInfo = launchableApps[packageName]
+            
+            if (resolveInfo != null && resolveInfo.activityInfo != null) {
+                val applicationInfo = resolveInfo.activityInfo.applicationInfo
+                val drawable = packageManager.getApplicationIcon(applicationInfo)
+                
+                if (drawable != null) {
+                    Log.d("UsageStatsService", "Found app icon via queryIntent: $packageName")
+                    return convertDrawableToBase64(drawable, packageName)
+                }
+            } else {
+                Log.d("UsageStatsService", "Package $packageName not found in launchable apps cache for icon")
+            }
+            
+            null
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Exception in tryGetIconViaQueryIntent for $packageName: ${e.javaClass.simpleName} - ${e.message}")
+            null // Failed, return null
+        }
+    }
+    
+    /**
+     * Convert drawable to base64 string
+     */
+    private fun convertDrawableToBase64(drawable: Drawable, packageName: String): String? {
+        return try {
+            val bitmap = drawableToBitmap(drawable)
+            
+            if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+                Log.w("UsageStatsService", "Invalid bitmap dimensions for package: $packageName")
+                return null
+            }
+            
+            val outputStream = ByteArrayOutputStream()
+            val compressed = bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            
+            if (!compressed) {
+                Log.w("UsageStatsService", "Failed to compress bitmap for package: $packageName")
+                return null
+            }
+            
+            val byteArray = outputStream.toByteArray()
+            
+            if (byteArray.isEmpty()) {
+                Log.w("UsageStatsService", "Empty byte array for package: $packageName")
+                return null
+            }
+            
+            Base64.encodeToString(byteArray, Base64.NO_WRAP)
+        } catch (e: OutOfMemoryError) {
+            Log.e("UsageStatsService", "Out of memory converting drawable for $packageName: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Error converting drawable to base64 for $packageName: ${e.javaClass.simpleName} - ${e.message}")
             null
         }
     }
     
     /**
      * Convert Drawable to Bitmap
+     * Enhanced with dimension validation and fallback size handling
      */
-    private fun drawableToBitmap(drawable: Drawable): Bitmap {
+    private fun drawableToBitmap(drawable: Drawable): Bitmap? {
+        if (drawable == null) {
+            Log.w("UsageStatsService", "Drawable is null in drawableToBitmap")
+            return null
+        }
+        
+        // If drawable is already a BitmapDrawable with a valid bitmap, return it directly
         if (drawable is BitmapDrawable && drawable.bitmap != null) {
             return drawable.bitmap
         }
         
-        val bitmap = Bitmap.createBitmap(
-            drawable.intrinsicWidth.coerceAtLeast(1),
-            drawable.intrinsicHeight.coerceAtLeast(1),
-            Bitmap.Config.ARGB_8888
-        )
-        val canvas = Canvas(bitmap)
-        drawable.setBounds(0, 0, canvas.width, canvas.height)
-        drawable.draw(canvas)
-        return bitmap
+        // Get intrinsic dimensions
+        var width = drawable.intrinsicWidth
+        var height = drawable.intrinsicHeight
+        
+        // Handle zero or negative dimensions with fallback size (48dp equivalent in pixels)
+        // Convert dp to pixels: 48dp * density = pixels
+        val fallbackSizePx = (48 * context.resources.displayMetrics.density).toInt()
+        
+        if (width <= 0) {
+            width = fallbackSizePx
+            Log.d("UsageStatsService", "Drawable width is invalid, using fallback: $fallbackSizePx")
+        }
+        
+        if (height <= 0) {
+            height = fallbackSizePx
+            Log.d("UsageStatsService", "Drawable height is invalid, using fallback: $fallbackSizePx")
+        }
+        
+        return try {
+            // Create bitmap with validated dimensions
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            
+            // Create canvas and draw drawable onto it
+            val canvas = Canvas(bitmap)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            
+            bitmap
+        } catch (e: OutOfMemoryError) {
+            Log.e("UsageStatsService", "Out of memory creating bitmap: ${e.message}")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.e("UsageStatsService", "Invalid argument creating bitmap: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Error converting drawable to bitmap: ${e.javaClass.simpleName} - ${e.message}")
+            null
+        }
     }
     
     /**

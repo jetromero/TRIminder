@@ -36,6 +36,11 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
     
+    <!-- App icon/name retrieval permission (Android 11+) -->
+    <!-- Required for querying installed apps to display app names and icons in usage statistics -->
+    <!-- Google Play Store requires justification form when publishing -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    
     <application
         android:label="TRIminder"
         android:name="${applicationName}"
@@ -95,10 +100,15 @@
 
     <!-- Queries declaration for Android 11+ -->
     <queries>
+        <!-- Existing PROCESS_TEXT intent -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
+        
+        <!-- Note: Package visibility for app icons/names is handled via QUERY_ALL_PACKAGES permission -->
+        <!-- The QUERY_ALL_PACKAGES permission (declared above) allows querying all installed apps on Android 11+ -->
+        <!-- For Android 10 and below, fallback strategies are used (queryIntentActivities, etc.) -->
     </queries>
     
 </manifest>
