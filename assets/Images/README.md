@@ -41,8 +41,10 @@
 
 ```bash
 flutter pub get
-flutter pub run flutter_launcher_icons
+dart run flutter_launcher_icons
 ```
+
+**Note:** If you get an error, make sure you've run `flutter pub get` first to install the package.
 
 ### Rebuild your app:
 

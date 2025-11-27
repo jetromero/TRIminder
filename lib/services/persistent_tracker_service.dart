@@ -125,8 +125,8 @@ class PersistentTrackerService {
           autoStart: true, // 🔥 Auto-start on device boot!
           isForegroundMode: true, // Runs in foreground for reliability
           notificationChannelId: 'triminder_tracking',
-          initialNotificationTitle: 'TRIminder Digital Wellness',
-          initialNotificationContent: 'Tracking screen time automatically',
+          initialNotificationTitle: 'TRIminder',
+          initialNotificationContent: 'Tracking',
           foregroundServiceNotificationId: 888,
         ),
         iosConfiguration: IosConfiguration(
@@ -522,14 +522,12 @@ class PersistentTrackerService {
       print('❌ Error storing initial session data: $e');
     }
 
-    // Update notification with loaded total
+    // Update notification with minimal content (IMPORTANCE_MIN channel = only small icon in status bar)
     if (service is AndroidServiceInstance) {
-      final hours = serviceData.todayScreenTime ~/ 60;
-      final minutes = serviceData.todayScreenTime % 60;
-      final timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
+      // Minimal notification - with IMPORTANCE_MIN, only shows small icon in status bar
       service.setForegroundNotificationInfo(
-        title: 'TRIminder Active',
-        content: 'Today: $timeStr screen time 📱',
+        title: 'TRIminder',
+        content: 'Tracking screen time',
       );
     }
 
@@ -554,8 +552,8 @@ class PersistentTrackerService {
           print('❌ Screen monitoring error: $error');
           if (service is AndroidServiceInstance) {
             service.setForegroundNotificationInfo(
-              title: 'TRIminder Error',
-              content: 'Screen monitoring failed',
+              title: 'TRIminder',
+              content: 'Tracking',
             );
           }
         },
@@ -567,8 +565,8 @@ class PersistentTrackerService {
       print('❌ Failed to initialize screen monitoring: $e');
       if (service is AndroidServiceInstance) {
         service.setForegroundNotificationInfo(
-          title: 'TRIminder Error', 
-          content: 'Failed to start monitoring',
+          title: 'TRIminder', 
+          content: 'Tracking',
         );
       }
     }
@@ -617,15 +615,16 @@ class PersistentTrackerService {
             final int minutes = totalMinutes % 60;
             final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
             try {
+              // Minimal notification - IMPORTANCE_MIN only shows small icon in status bar
               service.setForegroundNotificationInfo(
-                title: 'TRIminder Tracking',
-                content: 'Today: $timeStr',
+                title: 'TRIminder',
+                content: 'Tracking',
               );
             } catch (e) {
               print('❌ Error updating notification: $e');
               service.setForegroundNotificationInfo(
-                title: 'TRIminder Tracking',
-                content: 'Today: $timeStr',
+                title: 'TRIminder',
+                content: 'Tracking',
               );
             }
             serviceData.lastNotificationUpdate = nowTs;

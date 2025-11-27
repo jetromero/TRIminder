@@ -148,13 +148,13 @@ flutter:
 # App icon configuration
 # To change the app logo:
 # 1. If you have an SVG: Convert it to PNG (1024x1024px) first (see assets/Images/README.md)
-# 2. Place your logo image (1024x1024px PNG) in assets/Images/app_icon.png
+# 2. Place your logo image (1024x1024px PNG) in assets/Images/app/app_icon.png
 # 3. Run: flutter pub get
-# 4. Run: flutter pub run flutter_launcher_icons
+# 4. Run: dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/Images/app_icon.png"
+  image_path: "assets/Images/app/app_icon.png"
   # Optional: Use different icons for different platforms
   # android: "assets/Images/app_icon_android.png"
   # ios: "assets/Images/app_icon_ios.png"
@@ -162,4 +162,4 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   # Optional: Generate adaptive icons for Android
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/Images/app_icon.png"
+  adaptive_icon_foreground: "assets/Images/app/app_icon.png"

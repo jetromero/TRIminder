@@ -17,25 +17,37 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
 
         // Ensure notification channel exists for foreground service notifications
+        // Attempting IMPORTANCE_NONE to hide notification completely (may not work on all devices)
+        // Android requires foreground services to show notifications, but IMPORTANCE_NONE might hide it
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "triminder_tracking"
             val channelName = "TRIminder Tracking"
             val notificationManager = getSystemService(NotificationManager::class.java)
             val existing = notificationManager.getNotificationChannel(channelId)
             if (existing == null) {
+                // Try IMPORTANCE_NONE - this might completely hide the notification on some devices
+                // Note: This is experimental and may not work on all Android versions/devices
                 val channel = NotificationChannel(
                     channelId,
                     channelName,
-                    NotificationManager.IMPORTANCE_LOW  // Low importance = silent, shows in status bar only
+                    NotificationManager.IMPORTANCE_NONE  // Attempt to hide completely (experimental)
                 )
                 channel.description = "Foreground service for automatic screen time tracking"
                 channel.enableVibration(false)  // No vibration
                 channel.setSound(null, null)  // No sound
+                channel.setShowBadge(false)  // No badge
+                // Set lockscreen visibility to hide from lock screen
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_SECRET)
+                }
                 notificationManager.createNotificationChannel(channel)
             } else {
-                // Update existing channel to ensure it's silent
+                // Update existing channel to ensure it's minimal and silent
                 existing.enableVibration(false)
                 existing.setSound(null, null)
+                existing.setShowBadge(false)
+                // Note: Can't change importance of existing channel, user would need to uninstall/reinstall
+                // For existing users: Delete the channel manually in Settings → Apps → TRIminder → Notifications
             }
         }
     }
