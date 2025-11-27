@@ -208,10 +208,15 @@ class UsageStatsService(private val context: Context) {
     }
     
     /**
-     * Get per-app usage for a specific date
+     * Get per-app usage for a specific date using event-based aggregation
+     * This provides accurate usage statistics for exact date ranges, unlike INTERVAL_DAILY
+     * which can reset at unexpected times and return incorrect aggregated data.
+     * 
      * Returns map of packageName -> usageMinutes
      */
     fun getAppUsageForDate(dateMillis: Long): Map<String, Int> {
+        if (!isPermissionGranted()) return emptyMap()
+        
         val calendar = Calendar.getInstance()
         calendar.timeInMillis = dateMillis
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -223,10 +228,59 @@ class UsageStatsService(private val context: Context) {
         calendar.add(Calendar.DAY_OF_MONTH, 1)
         val endTime = calendar.timeInMillis
         
-        val stats = queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime)
+        // Query usage events instead of aggregated stats for accurate results
+        val events = queryUsageEvents(startTime, endTime)
         
-        return stats.mapValues { (_, usageStats) ->
-            (usageStats.totalTimeInForeground / TimeUnit.MINUTES.toMillis(1)).toInt()
+        // Track foreground start time for each app
+        val foregroundStartTimes = mutableMapOf<String, Long>()
+        // Track total usage time for each app (in milliseconds)
+        val appUsageTimes = mutableMapOf<String, Long>()
+        
+        // Process events chronologically
+        val sortedEvents = events.sortedBy { it["timestamp"] as Long }
+        
+        for (event in sortedEvents) {
+            val packageName = event["packageName"] as String
+            val eventType = event["eventType"] as Int
+            val timestamp = event["timestamp"] as Long
+            
+            when (eventType) {
+                UsageEvents.Event.MOVE_TO_FOREGROUND -> {
+                    // App moved to foreground - record start time
+                    foregroundStartTimes[packageName] = timestamp
+                }
+                UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                    // App moved to background - calculate duration and add to total
+                    val foregroundStart = foregroundStartTimes.remove(packageName)
+                    if (foregroundStart != null) {
+                        // Calculate duration (clamp to date range boundaries)
+                        // If app started before our date range, only count from startTime
+                        val actualStart = maxOf(foregroundStart, startTime)
+                        // If app ended after our date range, only count until endTime
+                        val actualEnd = minOf(timestamp, endTime)
+                        val duration = maxOf(0, actualEnd - actualStart)
+                        
+                        appUsageTimes[packageName] = appUsageTimes.getOrDefault(packageName, 0L) + duration
+                    }
+                }
+            }
+        }
+        
+        // Handle apps still in foreground at end of day
+        for ((packageName, foregroundStart) in foregroundStartTimes) {
+            // Clamp to date range boundaries
+            val actualStart = maxOf(foregroundStart, startTime)
+            // Use current time or endTime, whichever is earlier
+            val currentTime = System.currentTimeMillis()
+            val actualEnd = minOf(currentTime, endTime)
+            val duration = maxOf(0, actualEnd - actualStart)
+            
+            appUsageTimes[packageName] = appUsageTimes.getOrDefault(packageName, 0L) + duration
+        }
+        
+        // Convert milliseconds to minutes and return
+        return appUsageTimes.mapValues { (_, millis) ->
+            (millis / TimeUnit.MINUTES.toMillis(1)).toInt()
         }
     }
     

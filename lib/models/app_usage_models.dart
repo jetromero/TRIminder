@@ -99,3 +99,5 @@ class AppUsageEvent {
   bool get isMoveToBackground => eventType == 2; // UsageEvents.Event.MOVE_TO_BACKGROUND
 }
 
+
+
