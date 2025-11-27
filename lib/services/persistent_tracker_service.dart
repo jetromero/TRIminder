@@ -1054,12 +1054,16 @@ class PersistentTrackerService {
       final notificationService = ScreenTimeNotificationService();
 
       // Get configurable milestones (with defaults as fallback)
+      // Always reload from SharedPreferences to pick up user changes
       final sessionMilestones = await AppConfig.getSessionMilestones();
       final dailyMilestones = await AppConfig.getDailyTotalMilestones();
+      
+      print('🔔 Milestone check - Session milestones: $sessionMilestones, Daily milestones: $dailyMilestones');
 
       // Check session milestones (only when screen is on and not locked)
       if (serviceData.screenOnTime != null && !isLocked && currentSessionMinutes > 0) {
         SimplifiedLogger.info('🔔 Checking session milestones: currentSessionMinutes=$currentSessionMinutes, milestones=$sessionMilestones');
+        print('🔔 Checking session milestones: currentSessionMinutes=$currentSessionMinutes, milestones=$sessionMilestones');
         for (final milestone in sessionMilestones) {
           // Check if we've reached or passed this milestone
           // Use >= milestone to catch any time after the milestone is reached

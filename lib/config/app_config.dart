@@ -69,9 +69,15 @@ class AppConfig {
   static Future<List<int>> getSessionMilestones() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Reload to ensure we have the latest data
+      await prefs.reload();
       final saved = prefs.getStringList(_sessionMilestonesKey);
       if (saved != null && saved.isNotEmpty) {
-        return saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+        final milestones = saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+        print('📋 Loaded session milestones from SharedPreferences: $milestones');
+        return milestones;
+      } else {
+        print('📋 No saved session milestones found, using defaults: $_defaultSessionMilestones');
       }
     } catch (e) {
       print('⚠️ Error loading session milestones: $e');
@@ -83,9 +89,15 @@ class AppConfig {
   static Future<List<int>> getDailyTotalMilestones() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Reload to ensure we have the latest data
+      await prefs.reload();
       final saved = prefs.getStringList(_dailyMilestonesKey);
       if (saved != null && saved.isNotEmpty) {
-        return saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+        final milestones = saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+        print('📋 Loaded daily milestones from SharedPreferences: $milestones');
+        return milestones;
+      } else {
+        print('📋 No saved daily milestones found, using defaults: $_defaultDailyTotalMilestones');
       }
     } catch (e) {
       print('⚠️ Error loading daily milestones: $e');
@@ -100,10 +112,23 @@ class AppConfig {
       // Validate: must be positive integers
       final validMilestones = milestones.where((m) => m > 0).toList()..sort();
       if (validMilestones.isEmpty) {
+        print('❌ Cannot save session milestones: at least one milestone required');
         return false; // At least one milestone required
       }
-      await prefs.setStringList(_sessionMilestonesKey, validMilestones.map((e) => e.toString()).toList());
-      return true;
+      final stringList = validMilestones.map((e) => e.toString()).toList();
+      final success = await prefs.setStringList(_sessionMilestonesKey, stringList);
+      
+      // Force commit to ensure data is written immediately
+      await prefs.reload();
+      
+      print('✅ Saved session milestones: $validMilestones (success: $success)');
+      
+      // Verify the save worked by reloading
+      await prefs.reload();
+      final saved = prefs.getStringList(_sessionMilestonesKey);
+      print('🔍 Verification - Saved milestones: $saved');
+      
+      return success;
     } catch (e) {
       print('❌ Error saving session milestones: $e');
       return false;
@@ -117,10 +142,23 @@ class AppConfig {
       // Validate: must be positive integers
       final validMilestones = milestones.where((m) => m > 0).toList()..sort();
       if (validMilestones.isEmpty) {
+        print('❌ Cannot save daily milestones: at least one milestone required');
         return false; // At least one milestone required
       }
-      await prefs.setStringList(_dailyMilestonesKey, validMilestones.map((e) => e.toString()).toList());
-      return true;
+      final stringList = validMilestones.map((e) => e.toString()).toList();
+      final success = await prefs.setStringList(_dailyMilestonesKey, stringList);
+      
+      // Force commit to ensure data is written immediately
+      await prefs.reload();
+      
+      print('✅ Saved daily milestones: $validMilestones (success: $success)');
+      
+      // Verify the save worked
+      await prefs.reload();
+      final saved = prefs.getStringList(_dailyMilestonesKey);
+      print('🔍 Verification - Saved daily milestones: $saved');
+      
+      return success;
     } catch (e) {
       print('❌ Error saving daily milestones: $e');
       return false;

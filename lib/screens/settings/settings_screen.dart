@@ -931,24 +931,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: sessionMilestones.isEmpty || dailyMilestones.isEmpty
                   ? null
                   : () async {
+                      print('💾 Saving milestones - Session: $sessionMilestones, Daily: $dailyMilestones');
                       final sessionSuccess = await AppConfig.setSessionMilestones(sessionMilestones);
                       final dailySuccess = await AppConfig.setDailyTotalMilestones(dailyMilestones);
+                      
+                      print('💾 Save results - Session: $sessionSuccess, Daily: $dailySuccess');
+                      
+                      // Verify the save worked
+                      final verifySession = await AppConfig.getSessionMilestones();
+                      final verifyDaily = await AppConfig.getDailyTotalMilestones();
+                      print('🔍 Verification after save - Session: $verifySession, Daily: $verifyDaily');
                       
                       if (mounted) {
                         Navigator.of(context).pop();
                         if (sessionSuccess && dailySuccess) {
                           await _loadMilestones();
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Reminder settings saved'),
+                            SnackBar(
+                              content: Text('Reminder settings saved\nSession: $verifySession\nDaily: $verifyDaily'),
                               backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 3),
                             ),
                           );
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Failed to save settings'),
+                            SnackBar(
+                              content: Text('Failed to save settings\nSession success: $sessionSuccess\nDaily success: $dailySuccess'),
                               backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 3),
                             ),
                           );
                         }
