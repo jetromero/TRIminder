@@ -163,6 +163,17 @@ class DatabaseService {
     await db.execute('CREATE INDEX idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
     await db.execute('CREATE INDEX idx_xp_award_history_synced ON xp_award_history(isSynced)');
     await db.execute('CREATE INDEX idx_app_usage_user_date ON app_usage_logs(userId, date)');
+    
+    // Add unique constraint to prevent duplicate XP awards per user per day
+    try {
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_xp_award_history_user_date_unique '
+        'ON xp_award_history(userId, awardDate)'
+      );
+      print('✅ Unique constraint added to xp_award_history (userId, awardDate)');
+    } catch (e) {
+      print('⚠️ Error creating unique constraint (may already exist): $e');
+    }
   }
 
   /// Apply lightweight migrations on open
@@ -240,6 +251,17 @@ class DatabaseService {
         await db.execute('CREATE INDEX IF NOT EXISTS idx_screen_time_user_synced ON screen_time_entries(userId, isSynced)');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_synced ON xp_award_history(isSynced)');
+        
+        // Add unique constraint to prevent duplicate XP awards per user per day
+        try {
+          await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_xp_award_history_user_date_unique '
+            'ON xp_award_history(userId, awardDate)'
+          );
+          print('✅ Unique constraint added to xp_award_history (userId, awardDate)');
+        } catch (e) {
+          print('⚠️ Error creating unique constraint (may already exist): $e');
+        }
         
         print('✅ Migration complete: fullName split into firstName/lastName');
       }
@@ -397,6 +419,17 @@ class DatabaseService {
         ''');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_xp_award_history_synced ON xp_award_history(isSynced)');
+        
+        // Add unique constraint to prevent duplicate XP awards per user per day
+        try {
+          await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_xp_award_history_user_date_unique '
+            'ON xp_award_history(userId, awardDate)'
+          );
+          print('✅ Unique constraint added to xp_award_history (userId, awardDate)');
+        } catch (e) {
+          print('⚠️ Error creating unique constraint (may already exist): $e');
+        }
       }
     } catch (e) {
       AppLogger.warning('Migration check failed', 'migrate', e);
@@ -498,7 +531,31 @@ class DatabaseService {
   // XP Award History operations
   Future<int> insertXPAwardHistory(XPAwardHistory history) async {
     final db = await database;
-    return await db.insert('xp_award_history', history.toMap());
+    
+    // Check if XP was already awarded for this date (duplicate prevention)
+    final existing = await getXPAwardHistoryForDate(history.userId, history.awardDate);
+    if (existing != null) {
+      print('⚠️ XP already awarded locally for ${history.awardDate}, skipping duplicate insert');
+      return existing.id; // Return existing ID
+    }
+    
+    // Use INSERT OR IGNORE to handle race conditions gracefully
+    // The unique constraint will prevent duplicates even if check passes
+    try {
+      return await db.insert(
+        'xp_award_history', 
+        history.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.ignore, // Ignore duplicates
+      );
+    } catch (e) {
+      // If insert fails due to unique constraint, try to fetch existing record
+      final existingRecord = await getXPAwardHistoryForDate(history.userId, history.awardDate);
+      if (existingRecord != null) {
+        print('⚠️ Duplicate XP award prevented (unique constraint): ${history.awardDate}');
+        return existingRecord.id;
+      }
+      rethrow; // Re-throw if it's a different error
+    }
   }
 
   Future<XPAwardHistory?> getXPAwardHistoryForDate(String userId, DateTime date) async {

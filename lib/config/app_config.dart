@@ -1,4 +1,5 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AppConfig {
   static const String _envFile = '.env';
@@ -52,6 +53,100 @@ class AppConfig {
   static const int maxPasswordLength = 128;
   static const int minNameLength = 2;
   static const int maxNameLength = 100;
+  
+  // Screen Time Milestone Configuration
+  // Default session milestones (continuous screen time) - can be overridden by user preferences
+  static const List<int> _defaultSessionMilestones = [30, 60]; // minutes
+  
+  // Default daily total milestones - can be overridden by user preferences
+  static const List<int> _defaultDailyTotalMilestones = [120, 240, 360, 480]; // minutes (2hrs, 4hrs, 6hrs, 8hrs)
+  
+  // Keys for SharedPreferences
+  static const String _sessionMilestonesKey = 'session_milestones';
+  static const String _dailyMilestonesKey = 'daily_milestones';
+  
+  /// Get session milestones (configurable via SharedPreferences)
+  static Future<List<int>> getSessionMilestones() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList(_sessionMilestonesKey);
+      if (saved != null && saved.isNotEmpty) {
+        return saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+      }
+    } catch (e) {
+      print('⚠️ Error loading session milestones: $e');
+    }
+    return List.from(_defaultSessionMilestones);
+  }
+  
+  /// Get daily total milestones (configurable via SharedPreferences)
+  static Future<List<int>> getDailyTotalMilestones() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getStringList(_dailyMilestonesKey);
+      if (saved != null && saved.isNotEmpty) {
+        return saved.map((e) => int.tryParse(e) ?? 0).where((e) => e > 0).toList()..sort();
+      }
+    } catch (e) {
+      print('⚠️ Error loading daily milestones: $e');
+    }
+    return List.from(_defaultDailyTotalMilestones);
+  }
+  
+  /// Set custom session milestones
+  static Future<bool> setSessionMilestones(List<int> milestones) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Validate: must be positive integers
+      final validMilestones = milestones.where((m) => m > 0).toList()..sort();
+      if (validMilestones.isEmpty) {
+        return false; // At least one milestone required
+      }
+      await prefs.setStringList(_sessionMilestonesKey, validMilestones.map((e) => e.toString()).toList());
+      return true;
+    } catch (e) {
+      print('❌ Error saving session milestones: $e');
+      return false;
+    }
+  }
+  
+  /// Set custom daily total milestones
+  static Future<bool> setDailyTotalMilestones(List<int> milestones) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Validate: must be positive integers
+      final validMilestones = milestones.where((m) => m > 0).toList()..sort();
+      if (validMilestones.isEmpty) {
+        return false; // At least one milestone required
+      }
+      await prefs.setStringList(_dailyMilestonesKey, validMilestones.map((e) => e.toString()).toList());
+      return true;
+    } catch (e) {
+      print('❌ Error saving daily milestones: $e');
+      return false;
+    }
+  }
+  
+  /// Reset milestones to defaults
+  static Future<void> resetMilestonesToDefaults() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_sessionMilestonesKey);
+      await prefs.remove(_dailyMilestonesKey);
+    } catch (e) {
+      print('❌ Error resetting milestones: $e');
+    }
+  }
+  
+  // Legacy getters for backward compatibility (use defaults)
+  // Note: These are synchronous and return defaults. Use async getters above for user-configured values.
+  static List<int> get sessionMilestones => _defaultSessionMilestones;
+  static List<int> get dailyTotalMilestones => _defaultDailyTotalMilestones;
+  
+  // Notification Channel Configuration
+  static const String reminderNotificationChannelId = 'screen_time_reminders';
+  static const String reminderNotificationChannelName = 'Screen Time Reminders';
+  static const String reminderNotificationChannelDescription = 'Notifications about your screen time milestones';
   
   // Initialize configuration
   static Future<void> initialize() async {

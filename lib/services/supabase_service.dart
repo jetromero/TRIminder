@@ -570,19 +570,47 @@ class SupabaseService {
   }
 
   /// Insert XP award history record into Supabase
+  /// Uses upsert to handle duplicate key violations gracefully
   Future<XPAwardHistory?> insertXPAwardHistory(XPAwardHistory history) async {
     if (!isAuthenticated) return null;
 
     try {
+      // Use upsert with onConflict to handle unique constraint violations
+      // This prevents duplicate XP awards if two requests happen simultaneously
       final response = await _client
           .from('xp_award_history')
-          .insert(history.toJson())
+          .upsert(
+            history.toJson(),
+            onConflict: 'user_id,award_date', // Unique constraint columns
+          )
           .select()
           .single()
           .timeout(Duration(seconds: 5));
 
       return XPAwardHistory.fromJson(response);
     } catch (e) {
+      // Check if it's a unique constraint violation (duplicate)
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('duplicate') || 
+          errorStr.contains('unique') || 
+          errorStr.contains('violates unique constraint')) {
+        print('⚠️ XP already awarded for this date (duplicate prevented): ${history.awardDate}');
+        // Try to fetch the existing record
+        try {
+          final dateStr = '${history.awardDate.year}-${history.awardDate.month.toString().padLeft(2, '0')}-${history.awardDate.day.toString().padLeft(2, '0')}';
+          final existing = await _client
+              .from('xp_award_history')
+              .select()
+              .eq('user_id', history.userId)
+              .eq('award_date', dateStr)
+              .single()
+              .timeout(Duration(seconds: 5));
+          return XPAwardHistory.fromJson(existing);
+        } catch (fetchError) {
+          print('Error fetching existing XP award history: $fetchError');
+          return null;
+        }
+      }
       print('Error inserting XP award history: $e');
       return null;
     }

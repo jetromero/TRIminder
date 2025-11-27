@@ -379,6 +379,13 @@ class AutomaticScreenTracker extends ChangeNotifier {
     try {
       final db = DatabaseService();
       
+      // Check if XP was already stored for this date (duplicate prevention)
+      final existingHistory = await db.getXPAwardHistoryForDate(userId, awardDate);
+      if (existingHistory != null) {
+        SimplifiedLogger.xp('XP already stored locally for ${awardDate.toString().split(' ')[0]}, skipping duplicate storage');
+        return; // Already stored, no need to store again
+      }
+      
       // Store XP update log for sync
       final xpUpdate = XPUpdateLog(
         id: DateTime.now().microsecondsSinceEpoch,
@@ -392,6 +399,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
       await db.insertXPUpdateLog(xpUpdate);
       
       // Store XP award history for duplicate prevention
+      // insertXPAwardHistory will also check for duplicates internally
       final history = XPAwardHistory(
         id: DateTime.now().microsecondsSinceEpoch,
         userId: userId,

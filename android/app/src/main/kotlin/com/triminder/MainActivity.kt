@@ -26,10 +26,16 @@ class MainActivity : FlutterActivity() {
                 val channel = NotificationChannel(
                     channelId,
                     channelName,
-                    NotificationManager.IMPORTANCE_DEFAULT
+                    NotificationManager.IMPORTANCE_LOW  // Low importance = silent, shows in status bar only
                 )
                 channel.description = "Foreground service for automatic screen time tracking"
+                channel.enableVibration(false)  // No vibration
+                channel.setSound(null, null)  // No sound
                 notificationManager.createNotificationChannel(channel)
+            } else {
+                // Update existing channel to ensure it's silent
+                existing.enableVibration(false)
+                existing.setSound(null, null)
             }
         }
     }

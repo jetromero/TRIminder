@@ -12,6 +12,7 @@ import '../auth/login_screen.dart';
 import '../profile/student_profile_screen.dart';
 import '../../config/app_config.dart';
 import '../../widgets/app_scaffold.dart';
+import '../../services/screen_time_notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ValueChanged<int>? onSelectTab;
@@ -50,11 +51,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     '3rd Year',
     '4th Year',
   ];
+  
+  // Screen time reminder configuration
+  List<int> _sessionMilestones = [];
+  List<int> _dailyMilestones = [];
+  
+  // Reminder notification preferences
+  bool _reminderSoundEnabled = true;
+  bool _reminderVibrationEnabled = false; // Default: disabled
 
   @override
   void initState() {
     super.initState();
     _loadUserData();
+    _loadMilestones();
+    _loadReminderPreferences();
   }
   
   @override
@@ -98,6 +109,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _isLoading = false);
       }
       print('Error loading user data: $e');
+    }
+  }
+
+  Future<void> _loadMilestones() async {
+    try {
+      final sessionMilestones = await AppConfig.getSessionMilestones();
+      final dailyMilestones = await AppConfig.getDailyTotalMilestones();
+      if (mounted) {
+        setState(() {
+          _sessionMilestones = List.from(sessionMilestones);
+          _dailyMilestones = List.from(dailyMilestones);
+        });
+      }
+    } catch (e) {
+      print('Error loading milestones: $e');
+    }
+  }
+
+  Future<void> _loadReminderPreferences() async {
+    try {
+      final soundEnabled = await ScreenTimeNotificationService.getSoundEnabled();
+      final vibrationEnabled = await ScreenTimeNotificationService.getVibrationEnabled();
+      if (mounted) {
+        setState(() {
+          _reminderSoundEnabled = soundEnabled;
+          _reminderVibrationEnabled = vibrationEnabled;
+        });
+      }
+    } catch (e) {
+      print('Error loading reminder preferences: $e');
     }
   }
   
@@ -555,13 +596,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 12),
             _buildSettingsItem(
               icon: Icons.notifications,
-              title: 'Notifications',
-              subtitle: 'Manage notification preferences',
+              title: 'Screen Time Reminders',
+              subtitle: 'Configure reminder milestones',
               onTap: () {
-                // TODO: Implement notification settings
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Notification settings coming soon')),
-                );
+                _showReminderSettingsDialog();
+              },
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              secondary: const Icon(Icons.volume_up),
+              title: const Text('Reminder Sound'),
+              subtitle: const Text('Play sound for reminder notifications'),
+              value: _reminderSoundEnabled,
+              onChanged: (value) async {
+                await ScreenTimeNotificationService.setSoundEnabled(value);
+                if (mounted) {
+                  setState(() {
+                    _reminderSoundEnabled = value;
+                  });
+                }
+              },
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.vibration),
+              title: const Text('Reminder Vibration'),
+              subtitle: const Text('Vibrate for reminder notifications'),
+              value: _reminderVibrationEnabled,
+              onChanged: (value) async {
+                await ScreenTimeNotificationService.setVibrationEnabled(value);
+                if (mounted) {
+                  setState(() {
+                    _reminderVibrationEnabled = value;
+                  });
+                }
               },
             ),
             _buildSettingsItem(
@@ -705,6 +772,245 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _showReminderSettingsDialog() async {
+    // Load current milestones
+    await _loadMilestones();
+    
+    // Create editable lists
+    List<int> sessionMilestones = List.from(_sessionMilestones);
+    List<int> dailyMilestones = List.from(_dailyMilestones);
+    
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Screen Time Reminders'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Session Reminders',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Get notified after continuous screen time (in minutes)',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...sessionMilestones.map((milestone) => Chip(
+                      label: Text('$milestone min'),
+                      onDeleted: () {
+                        setDialogState(() {
+                          sessionMilestones.remove(milestone);
+                        });
+                      },
+                    )),
+                    ActionChip(
+                      label: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, size: 16),
+                          SizedBox(width: 4),
+                          Text('Add'),
+                        ],
+                      ),
+                      onPressed: () => _showAddMilestoneDialog(
+                        context,
+                        setDialogState,
+                        sessionMilestones,
+                        'Session',
+                        (value) {
+                          setDialogState(() {
+                            if (!sessionMilestones.contains(value)) {
+                              sessionMilestones.add(value);
+                              sessionMilestones.sort();
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  'Daily Total Reminders',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Get notified when daily screen time reaches (in minutes)',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ...dailyMilestones.map((milestone) => Chip(
+                      label: Text('${milestone ~/ 60}h ${milestone % 60}m'),
+                      onDeleted: () {
+                        setDialogState(() {
+                          dailyMilestones.remove(milestone);
+                        });
+                      },
+                    )),
+                    ActionChip(
+                      label: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add, size: 16),
+                          SizedBox(width: 4),
+                          Text('Add'),
+                        ],
+                      ),
+                      onPressed: () => _showAddMilestoneDialog(
+                        context,
+                        setDialogState,
+                        dailyMilestones,
+                        'Daily',
+                        (value) {
+                          setDialogState(() {
+                            if (!dailyMilestones.contains(value)) {
+                              dailyMilestones.add(value);
+                              dailyMilestones.sort();
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                if (sessionMilestones.isEmpty || dailyMilestones.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Text(
+                      '⚠️ At least one milestone is required for each type',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                // Reset to defaults
+                await AppConfig.resetMilestonesToDefaults();
+                await _loadMilestones();
+                if (mounted) {
+                  Navigator.of(context).pop();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Reset to default milestones')),
+                  );
+                }
+              },
+              child: const Text('Reset to Defaults'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: sessionMilestones.isEmpty || dailyMilestones.isEmpty
+                  ? null
+                  : () async {
+                      final sessionSuccess = await AppConfig.setSessionMilestones(sessionMilestones);
+                      final dailySuccess = await AppConfig.setDailyTotalMilestones(dailyMilestones);
+                      
+                      if (mounted) {
+                        Navigator.of(context).pop();
+                        if (sessionSuccess && dailySuccess) {
+                          await _loadMilestones();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Reminder settings saved'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Failed to save settings'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      }
+                    },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddMilestoneDialog(
+    BuildContext context,
+    StateSetter setDialogState,
+    List<int> currentMilestones,
+    String type,
+    Function(int) onAdd,
+  ) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add $type Milestone'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: 'Minutes',
+            hintText: type == 'Session' ? 'e.g., 30' : 'e.g., 120 (2 hours)',
+            helperText: type == 'Session'
+                ? 'Minutes of continuous use'
+                : 'Total minutes for the day',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = int.tryParse(controller.text);
+              if (value != null && value > 0) {
+                if (currentMilestones.contains(value)) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('$value minutes is already added')),
+                  );
+                } else {
+                  onAdd(value);
+                  Navigator.of(context).pop();
+                }
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter a valid number')),
+                );
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
       ),
     );
   }

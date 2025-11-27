@@ -19,6 +19,8 @@ import '../utils/android_permission_helper.dart';
 import '../utils/usage_stats_helper.dart';
 import 'idle_detection_service.dart';
 import 'sync_coordinator.dart';
+import 'screen_time_notification_service.dart';
+import '../config/app_config.dart';
 
 
 /// Data wrapper class for service variables (enables reference passing)
@@ -531,6 +533,15 @@ class PersistentTrackerService {
       );
     }
 
+    // Initialize screen time notification service
+    try {
+      await ScreenTimeNotificationService().initialize();
+      print('✅ Screen time notification service initialized');
+    } catch (e) {
+      print('⚠️ Failed to initialize notification service: $e');
+      // Continue even if notification service fails
+    }
+
     // Initialize screen state monitoring
     Screen? screen;
     StreamSubscription<ScreenStateEvent>? screenSubscription;
@@ -562,7 +573,6 @@ class PersistentTrackerService {
       }
     }
 
-
     // Periodic tasks (every 1 minute) - for real-time updates
     Timer.periodic(_periodicTaskInterval, (timer) async {
       try {
@@ -593,7 +603,8 @@ class PersistentTrackerService {
         
         print('📊 Screen time calculation: DB=${serviceData.todayScreenTime}m + Session=${currentSessionMinutes}m = Total=${totalMinutes}m');
         
-        
+        // Check for milestone notifications
+        await _checkMilestones(serviceData, currentSessionMinutes, totalMinutes, isLocked);
 
         // Update notification with total including current live session
         // Throttle to every 5 minutes to reduce churn
@@ -1031,6 +1042,51 @@ class PersistentTrackerService {
   static Future<bool> _onIosBackground(ServiceInstance service) async {
     print('📱 iOS background mode activated');
     return true;
+  }
+
+  /// Check for milestone notifications and trigger them if needed
+  static Future<void> _checkMilestones(
+    _ServiceData serviceData,
+    int currentSessionMinutes,
+    int totalMinutes,
+    bool isLocked,
+  ) async {
+    try {
+      final notificationService = ScreenTimeNotificationService();
+
+      // Get configurable milestones (with defaults as fallback)
+      final sessionMilestones = await AppConfig.getSessionMilestones();
+      final dailyMilestones = await AppConfig.getDailyTotalMilestones();
+
+      // Check session milestones (only when screen is on and not locked)
+      if (serviceData.screenOnTime != null && !isLocked && currentSessionMinutes > 0) {
+        SimplifiedLogger.info('🔔 Checking session milestones: currentSessionMinutes=$currentSessionMinutes, milestones=$sessionMilestones');
+        for (final milestone in sessionMilestones) {
+          // Check if we've reached or passed this milestone
+          // Use >= milestone to catch any time after the milestone is reached
+          // The showSessionMilestone method will prevent duplicates
+          if (currentSessionMinutes >= milestone) {
+            SimplifiedLogger.info('🔔 Session milestone reached: $milestone minutes (current: $currentSessionMinutes)');
+            await notificationService.showSessionMilestone(milestone);
+          }
+        }
+      } else {
+        SimplifiedLogger.info('🔔 Skipping session milestone check: screenOnTime=${serviceData.screenOnTime}, isLocked=$isLocked, currentSessionMinutes=$currentSessionMinutes');
+      }
+
+      // Check daily total milestones
+      for (final milestone in dailyMilestones) {
+        // Check if we've reached or passed this milestone
+        // Use >= milestone to catch any time after the milestone is reached
+        // The showDailyMilestone method will prevent duplicates
+        if (totalMinutes >= milestone) {
+          await notificationService.showDailyMilestone(milestone);
+        }
+      }
+    } catch (e) {
+      SimplifiedLogger.error('Error checking milestones: $e');
+      // Don't throw - milestone checking should not break the service
+    }
   }
 
   /// Update session data in SharedPreferences

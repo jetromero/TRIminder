@@ -76,6 +76,12 @@ dependencies:
   
   # For cached network images (offline support)
   cached_network_image: ^3.3.1
+  
+  # For overlay reminders (gentle popup cards over other apps)
+  flutter_overlay_window: ^0.4.0
+  
+  # For heads-up notifications (screen time reminders)
+  flutter_local_notifications: ^17.2.2
 
 dev_dependencies:
   flutter_test:
@@ -87,6 +93,9 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  
+  # For generating app icons
+  flutter_launcher_icons: ^0.13.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -135,3 +144,22 @@ flutter:
   
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icon configuration
+# To change the app logo:
+# 1. If you have an SVG: Convert it to PNG (1024x1024px) first (see assets/Images/README.md)
+# 2. Place your logo image (1024x1024px PNG) in assets/Images/app_icon.png
+# 3. Run: flutter pub get
+# 4. Run: flutter pub run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/Images/app_icon.png"
+  # Optional: Use different icons for different platforms
+  # android: "assets/Images/app_icon_android.png"
+  # ios: "assets/Images/app_icon_ios.png"
+  # Optional: Remove old launcher icons before generating new ones
+  remove_alpha_ios: true
+  # Optional: Generate adaptive icons for Android
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/Images/app_icon.png"
