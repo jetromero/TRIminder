@@ -360,22 +360,23 @@ class PersistentTrackerService {
       }
     }
 
-    // Request exact alarm permission (Android 12+)
+    // Check exact alarm permission status but DON'T redirect to settings before login
+    // This permission request will be shown after user logs in via permission status widget
     if (Platform.isAndroid) {
       try {
         final androidInfo = await DeviceInfoPlugin().androidInfo;
         if (androidInfo.version.sdkInt >= 31) {
-          print('📱 Requesting exact alarm permission (Android 12+)...');
-          final exactAlarmGranted = await AndroidPermissionHelper.requestExactAlarmPermission();
+          print('📱 Checking exact alarm permission status (not requesting yet)...');
+          final exactAlarmGranted = await AndroidPermissionHelper.isExactAlarmPermissionGranted();
           if (exactAlarmGranted) {
-            print('✅ Exact alarm permission request launched');
+            print('✅ Exact alarm permission already granted');
           } else {
-            print('⚠️ Failed to launch exact alarm permission settings');
-            print('💡 User may need to manually enable exact alarms in Settings');
+            print('ℹ️ Exact alarm permission not granted - will prompt after login');
+            // Will be handled in permission status widget after login
           }
         }
       } catch (e) {
-        print('⚠️ Error requesting exact alarm permission: $e');
+        print('⚠️ Error checking exact alarm permission: $e');
       }
     }
 

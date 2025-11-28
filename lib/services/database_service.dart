@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../models/user_models.dart';
@@ -23,7 +24,7 @@ class DatabaseService {
     
     return await openDatabase(
       path,
-      version: 2, // Incremented to ensure migrations run
+      version: 3, // Incremented for badge system migration
       onCreate: _createTables,
       onUpgrade: (db, oldVersion, newVersion) async {
         // Run migrations on upgrade
@@ -75,12 +76,15 @@ class DatabaseService {
     // Badges table
     await db.execute('''
       CREATE TABLE badges (
-        id TEXT PRIMARY KEY,
+        id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        iconPath TEXT NOT NULL,
-        type INTEGER NOT NULL,
-        requiredValue INTEGER NOT NULL,
+        description TEXT,
+        iconPath TEXT,
+        category TEXT NOT NULL DEFAULT 'daily',
+        rarity TEXT NOT NULL DEFAULT 'common',
+        requiredValue INTEGER,
+        xpReward INTEGER NOT NULL DEFAULT 0,
+        unlockConditions TEXT,
         createdAt TEXT NOT NULL
       )
     ''');
@@ -98,7 +102,7 @@ class DatabaseService {
       CREATE TABLE user_badges (
         id TEXT PRIMARY KEY,
         userId TEXT NOT NULL,
-        badgeId TEXT NOT NULL,
+        badgeId INTEGER NOT NULL,
         earnedAt TEXT NOT NULL,
         isSynced INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (userId) REFERENCES user_profiles (id),
@@ -431,6 +435,138 @@ class DatabaseService {
           print('⚠️ Error creating unique constraint (may already exist): $e');
         }
       }
+
+      // Migrate badges table to new schema
+      try {
+        final badgeTableInfo = await db.rawQuery('PRAGMA table_info(badges)');
+        if (badgeTableInfo.isNotEmpty) {
+          final badgeColumns = badgeTableInfo.map((c) => (c['name'] as String?)).toSet();
+          
+          // Check if migration is needed
+          bool needsMigration = false;
+          if (!badgeColumns.contains('category') || 
+              !badgeColumns.contains('rarity') || 
+              !badgeColumns.contains('xpReward') ||
+              badgeColumns.contains('type')) {
+            needsMigration = true;
+          }
+          
+          if (needsMigration) {
+            print('🔄 Migrating badges table to new schema...');
+            
+            // Create new badges table
+            await db.execute('''
+              CREATE TABLE badges_new (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                iconPath TEXT,
+                category TEXT NOT NULL DEFAULT 'daily',
+                rarity TEXT NOT NULL DEFAULT 'common',
+                requiredValue INTEGER,
+                xpReward INTEGER NOT NULL DEFAULT 0,
+                unlockConditions TEXT,
+                createdAt TEXT NOT NULL
+              )
+            ''');
+            
+            // Migrate existing badges data
+            final existingBadges = await db.query('badges');
+            for (final badge in existingBadges) {
+              // Map old type to category (if type exists)
+              String category = 'daily';
+              if (badge['type'] != null) {
+                final type = badge['type'] as int? ?? 0;
+                // Map old type values to categories (adjust as needed)
+                category = type == 0 ? 'daily' : 'milestone';
+              }
+              
+              // Use requiredValue as xpReward if xpReward doesn't exist
+              final xpReward = badge['xpReward'] ?? badge['requiredValue'] ?? 0;
+              
+              await db.insert('badges_new', {
+                'id': badge['id'] is int 
+                    ? badge['id'] 
+                    : int.tryParse(badge['id']?.toString() ?? '0') ?? 0,
+                'name': badge['name'],
+                'description': badge['description'],
+                'iconPath': badge['iconPath'],
+                'category': category,
+                'rarity': 'common', // Default rarity for existing badges
+                'requiredValue': badge['requiredValue'],
+                'xpReward': xpReward,
+                'unlockConditions': null,
+                'createdAt': badge['createdAt'] ?? DateTime.now().toIso8601String(),
+              });
+            }
+            
+            // Drop old table and rename new one
+            await db.execute('DROP TABLE badges');
+            await db.execute('ALTER TABLE badges_new RENAME TO badges');
+            
+            print('✅ Badges table migration complete');
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error migrating badges table: $e');
+      }
+
+      // Migrate user_badges table badgeId from TEXT to INTEGER
+      try {
+        final userBadgesTableInfo = await db.rawQuery('PRAGMA table_info(user_badges)');
+        if (userBadgesTableInfo.isNotEmpty) {
+          final userBadgesColumns = userBadgesTableInfo.map((c) => (c['name'] as String?)).toSet();
+          
+          // Check if badgeId column exists and needs migration
+          if (userBadgesColumns.contains('badgeId')) {
+            // Check if badgeId is TEXT (needs migration)
+            final badgeIdColumn = userBadgesTableInfo.firstWhere(
+              (c) => c['name'] == 'badgeId',
+              orElse: () => {},
+            );
+            
+            if (badgeIdColumn['type']?.toString().toLowerCase().contains('text') == true) {
+              print('🔄 Migrating user_badges badgeId from TEXT to INTEGER...');
+              
+              // Create new table
+              await db.execute('''
+                CREATE TABLE user_badges_new (
+                  id TEXT PRIMARY KEY,
+                  userId TEXT NOT NULL,
+                  badgeId INTEGER NOT NULL,
+                  earnedAt TEXT NOT NULL,
+                  isSynced INTEGER NOT NULL DEFAULT 0,
+                  FOREIGN KEY (userId) REFERENCES user_profiles (id),
+                  FOREIGN KEY (badgeId) REFERENCES badges (id)
+                )
+              ''');
+              
+              // Migrate data, converting badgeId from TEXT to INTEGER
+              final existingUserBadges = await db.query('user_badges');
+              for (final userBadge in existingUserBadges) {
+                final badgeIdStr = userBadge['badgeId']?.toString() ?? '0';
+                final badgeIdInt = int.tryParse(badgeIdStr) ?? 0;
+                
+                await db.insert('user_badges_new', {
+                  'id': userBadge['id'],
+                  'userId': userBadge['userId'],
+                  'badgeId': badgeIdInt,
+                  'earnedAt': userBadge['earnedAt'],
+                  'isSynced': userBadge['isSynced'],
+                });
+              }
+              
+              // Drop old table and rename new one
+              await db.execute('DROP TABLE user_badges');
+              await db.execute('ALTER TABLE user_badges_new RENAME TO user_badges');
+              
+              print('✅ user_badges badgeId migration complete');
+            }
+          }
+        }
+      } catch (e) {
+        print('⚠️ Error migrating user_badges table: $e');
+      }
     } catch (e) {
       AppLogger.warning('Migration check failed', 'migrate', e);
     }
@@ -661,9 +797,26 @@ class DatabaseService {
     final db = await database;
     return await db.insert(
       'badges',
-      badge.toMap(),
+      _badgeToDbMap(badge),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<void> upsertBadges(List<Badge> badges) async {
+    if (badges.isEmpty) return;
+    final db = await database;
+    final batch = db.batch();
+    final now = DateTime.now().toIso8601String();
+    for (final badge in badges) {
+      final map = _badgeToDbMap(badge);
+      map['createdAt'] = map['createdAt'] ?? now;
+      batch.insert(
+        'badges',
+        map,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<List<UserBadge>> getUserBadges(String userId) async {
@@ -689,7 +842,7 @@ class DatabaseService {
   }
 
   /// Get badge details by badgeId from local database
-  Future<Badge?> getBadgeById(String badgeId) async {
+  Future<Badge?> getBadgeById(int badgeId) async {
     try {
       final db = await database;
       final List<Map<String, dynamic>> maps = await db.query(
@@ -700,17 +853,7 @@ class DatabaseService {
       );
 
       if (maps.isNotEmpty) {
-        final map = maps.first;
-        // Map local database fields to Badge model
-        // Local DB has: id, name, description, iconPath, type, requiredValue, createdAt
-        // Badge model expects: id, name, description, iconUrl, xpReward
-        return Badge(
-          id: int.tryParse(map['id']?.toString() ?? '0') ?? 0,
-          name: map['name']?.toString() ?? 'Unknown Badge',
-          description: map['description']?.toString(),
-          iconUrl: map['iconPath']?.toString(), // Map iconPath to iconUrl
-          xpReward: map['requiredValue'] as int? ?? 0, // Use requiredValue as xpReward
-        );
+        return Badge.fromMap(maps.first);
       }
       return null;
     } catch (e) {
@@ -721,11 +864,99 @@ class DatabaseService {
 
   Future<int> insertUserBadge(UserBadge userBadge) async {
     final db = await database;
+    // Map model fields to database fields (awardedAt -> earnedAt)
+    final map = {
+      'id': '${userBadge.userId}_${userBadge.badgeId}',
+      'userId': userBadge.userId,
+      'badgeId': userBadge.badgeId,
+      'earnedAt': userBadge.awardedAt.toIso8601String(), // Map awardedAt to earnedAt
+      'isSynced': userBadge.isSynced ? 1 : 0,
+    };
     return await db.insert(
       'user_badges',
-      userBadge.toMap(),
+      map,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Map<String, dynamic> _badgeToDbMap(Badge badge) {
+    return {
+      'id': badge.id,
+      'name': badge.name,
+      'description': badge.description,
+      'iconPath': badge.iconUrl,
+      'category': badge.category.toJson(),
+      'rarity': badge.rarity.toJson(),
+      'requiredValue': badge.requiredValue,
+      'xpReward': badge.xpReward,
+      'unlockConditions':
+          badge.unlockConditions != null ? jsonEncode(badge.unlockConditions) : null,
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+  }
+
+  /// Get unsynced user badges
+  Future<List<UserBadge>> getUnsyncedUserBadges(String userId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'user_badges',
+      where: 'userId = ? AND isSynced = ?',
+      whereArgs: [userId, 0],
+      orderBy: 'earnedAt DESC',
+    );
+
+    return List.generate(maps.length, (i) {
+      final map = maps[i];
+      return UserBadge(
+        userId: map['userId']?.toString() ?? '',
+        badgeId: map['badgeId'] is int
+            ? map['badgeId']
+            : int.tryParse(map['badgeId']?.toString() ?? '0') ?? 0,
+        awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        isSynced: (map['isSynced'] as int? ?? 0) == 1,
+      );
+    });
+  }
+
+  /// Update user badge (mainly for synced status)
+  Future<int> updateUserBadge(UserBadge userBadge) async {
+    final db = await database;
+    final map = {
+      'userId': userBadge.userId,
+      'badgeId': userBadge.badgeId,
+      'earnedAt': userBadge.awardedAt.toIso8601String(),
+      'isSynced': userBadge.isSynced ? 1 : 0,
+    };
+    return await db.update(
+      'user_badges',
+      map,
+      where: 'userId = ? AND badgeId = ?',
+      whereArgs: [userBadge.userId, userBadge.badgeId],
+    );
+  }
+
+  /// Get specific user badge
+  Future<UserBadge?> getUserBadge(String userId, int badgeId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'user_badges',
+      where: 'userId = ? AND badgeId = ?',
+      whereArgs: [userId, badgeId],
+      limit: 1,
+    );
+
+    if (maps.isNotEmpty) {
+      final map = maps.first;
+      return UserBadge(
+        userId: map['userId']?.toString() ?? '',
+        badgeId: map['badgeId'] is int
+            ? map['badgeId']
+            : int.tryParse(map['badgeId']?.toString() ?? '0') ?? 0,
+        awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        isSynced: (map['isSynced'] as int? ?? 0) == 1,
+      );
+    }
+    return null;
   }
 
   // Sync operations

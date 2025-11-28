@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../services/database_service.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
+import '../models/challenge_models.dart';
 import '../utils/input_validator.dart';
 import '../config/app_config.dart';
 
@@ -1161,6 +1162,24 @@ class SupabaseService {
           .toList();
     } catch (e) {
       print('Error fetching badges: $e');
+      return [];
+    }
+  }
+
+  Future<List<Challenge>> getChallenges() async {
+    try {
+      final response = await _client
+          .from('challenges')
+          .select(
+              'id, title, description, category, reset_interval, target_value, metadata, sort_order, is_active, badge:badge_id(*)')
+          .eq('is_active', true)
+          .order('sort_order');
+
+      return (response as List)
+          .map((json) => Challenge.fromJson(json as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      print('Error fetching challenges: $e');
       return [];
     }
   }

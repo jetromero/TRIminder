@@ -245,7 +245,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           // Fetch badge details from local database
           final badgeMaps = <Map<String, dynamic>>[];
           for (final userBadge in localBadges) {
-            final badge = await db.getBadgeById(userBadge.badgeId.toString());
+            final badge = await db.getBadgeById(userBadge.badgeId);
             if (badge != null) {
               badgeMaps.add({
                 'badgeId': userBadge.badgeId,

@@ -25,6 +25,11 @@ import '../../widgets/profile/avatar_widget.dart';
 import '../profile/student_profile_screen.dart';
 import '../../models/app_usage_models.dart';
 import '../../services/usage_stats_service.dart';
+import '../../models/badge_models.dart' as badge_models;
+import '../../models/challenge_models.dart' as challenge_models;
+import '../../services/badge_service.dart';
+import '../../services/challenge_service.dart';
+import '../../utils/badge_icon_helper.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool isNewUser;
@@ -3613,8 +3618,263 @@ class ChallengesTab extends StatefulWidget {
 }
 
 class _ChallengesTabState extends State<ChallengesTab> {
+  bool _isLoading = true;
+  final ChallengeService _challengeService = ChallengeService();
+  List<badge_models.Badge> _allBadges = [];
+  List<challenge_models.Challenge> _challenges = [];
+  Set<int> _earnedBadgeIds = {};
+  Map<int, double> _badgeProgress = {};
+  
+  // Screen time stats
+  int? _dailyScreenTimeMinutes;
+  int? _weeklyAverageMinutes;
+  int? _monthlyAverageMinutes;
+  int? _currentStreak;
+  int? _totalXP;
+  int? _level;
+  int? _friendCount;
+  
+  // Timer strings
+  String _dailyResetTimer = 'Calculating...';
+  String _weeklyResetTimer = 'Calculating...';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadChallengesData();
+  }
+
+  Future<void> _loadChallengesData() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // Load badges and stats first (in parallel)
+      await Future.wait([
+        _loadBadges(),
+        _loadScreenTimeStats(),
+      ]);
+      
+      // Then calculate progress (depends on badges and stats)
+      await _calculateProgress();
+      
+      // Calculate timers (independent)
+      _calculateTimers();
+    } catch (e) {
+      print('Error loading challenges data: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadBadges() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return;
+      
+      final challenges = await _challengeService.loadChallenges();
+      final allBadges = challenges
+          .map((challenge) => challenge.badge ?? challenge.toBadgeFallback())
+          .where((badge) => badge.id != 0)
+          .toList();
+
+      final db = DatabaseService();
+      final userBadges = await db.getUserBadges(userId);
+      final earnedIds = userBadges.map((b) => b.badgeId).toSet();
+      
+      if (mounted) {
+        setState(() {
+          _challenges = challenges;
+          _allBadges = allBadges;
+          _earnedBadgeIds = earnedIds;
+        });
+      }
+    } catch (e) {
+      print('Error loading badges: $e');
+    }
+  }
+
+  Future<void> _loadScreenTimeStats() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) return;
+      
+      final db = DatabaseService();
+      final tracker = AutomaticScreenTracker();
+      
+      // Get daily screen time
+      final dailyMinutes = tracker.todayScreenTimeMinutes;
+      
+      // Calculate weekly average
+      final now = DateTime.now();
+      final weekAgo = now.subtract(const Duration(days: 7));
+      final weeklyEntries = await db.getScreenTimeEntriesForDateRange(userId, weekAgo, now);
+      final weeklyTotal = weeklyEntries
+          .where((e) => e.durationMinutes != null)
+          .fold<int>(0, (sum, e) => sum + (e.durationMinutes ?? 0));
+      final weeklyAverage = weeklyTotal > 0 ? (weeklyTotal / 7).round() : null;
+      
+      // Calculate monthly average
+      final monthAgo = now.subtract(const Duration(days: 30));
+      final monthlyEntries = await db.getScreenTimeEntriesForDateRange(userId, monthAgo, now);
+      final monthlyTotal = monthlyEntries
+          .where((e) => e.durationMinutes != null)
+          .fold<int>(0, (sum, e) => sum + (e.durationMinutes ?? 0));
+      final monthlyAverage = monthlyTotal > 0 ? (monthlyTotal / 30).round() : null;
+      
+      // Calculate streak (simplified - using BadgeService logic)
+      int currentStreak = 0;
+      final today = DateTime(now.year, now.month, now.day);
+      final dailyTotals = <String, int>{};
+      final allEntries = await db.getScreenTimeEntriesForDateRange(
+        userId,
+        now.subtract(const Duration(days: 60)),
+        now,
+      );
+      for (final entry in allEntries) {
+        if (entry.durationMinutes == null) continue;
+        final dateKey = '${entry.startTime.year}-${entry.startTime.month.toString().padLeft(2, '0')}-${entry.startTime.day.toString().padLeft(2, '0')}';
+        dailyTotals[dateKey] = (dailyTotals[dateKey] ?? 0) + entry.durationMinutes!;
+      }
+      for (int i = 0; i < 60; i++) {
+        final checkDate = today.subtract(Duration(days: i));
+        final dateKey = '${checkDate.year}-${checkDate.month.toString().padLeft(2, '0')}-${checkDate.day.toString().padLeft(2, '0')}';
+        final dayTotal = dailyTotals[dateKey] ?? 0;
+        if (dayTotal == 0 && i > 0) break;
+        if (dayTotal <= 240) {
+          currentStreak++;
+        } else {
+          if (i == 0 && now.hour < 20) continue;
+          break;
+        }
+      }
+      
+      // Get user profile for XP and level
+      final userProfile = await db.getUserProfile(userId);
+      final totalXP = userProfile?.xp ?? 0;
+      final level = userProfile != null ? LevelCalculator.getLevel(totalXP) : 0;
+      
+      // Get friend count (optional)
+      int? friendCount;
+      try {
+        final supabaseService = SupabaseService();
+        if (await supabaseService.isConnected()) {
+          final friends = await supabaseService.getFriends();
+          friendCount = friends.length;
+        }
+      } catch (e) {
+        // Friend count not critical
+      }
+      
+      if (mounted) {
+        setState(() {
+          _dailyScreenTimeMinutes = dailyMinutes;
+          _weeklyAverageMinutes = weeklyAverage;
+          _monthlyAverageMinutes = monthlyAverage;
+          _currentStreak = currentStreak > 0 ? currentStreak : null;
+          _totalXP = totalXP;
+          _level = level;
+          _friendCount = friendCount;
+        });
+      }
+    } catch (e) {
+      print('Error loading screen time stats: $e');
+    }
+  }
+
+  Future<void> _calculateProgress() async {
+    try {
+      final badgeService = BadgeService();
+      final progressMap = <int, double>{};
+      
+      for (final badge in _allBadges) {
+        // If badge is already earned, set progress to 100%
+        if (_earnedBadgeIds.contains(badge.id)) {
+          progressMap[badge.id] = 1.0;
+        } else {
+          // Calculate progress for unearned badges
+          final progress = await badgeService.getBadgeProgress(
+            badge,
+            dailyScreenTimeMinutes: _dailyScreenTimeMinutes,
+            weeklyAverageMinutes: _weeklyAverageMinutes,
+            monthlyAverageMinutes: _monthlyAverageMinutes,
+            currentStreak: _currentStreak,
+            totalXP: _totalXP,
+            level: _level,
+            friendCount: _friendCount,
+          );
+          progressMap[badge.id] = progress;
+        }
+      }
+      
+      if (mounted) {
+        setState(() {
+          _badgeProgress = progressMap;
+        });
+      }
+    } catch (e) {
+      print('Error calculating progress: $e');
+    }
+  }
+
+  void _calculateTimers() {
+    final now = DateTime.now();
+    
+    // Daily reset (midnight)
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final dailyDuration = tomorrow.difference(now);
+    final dailyHours = dailyDuration.inHours;
+    final dailyMinutes = dailyDuration.inMinutes % 60;
+    _dailyResetTimer = dailyHours > 0 
+        ? 'Resets in ${dailyHours}h ${dailyMinutes}m'
+        : 'Resets in ${dailyMinutes}m';
+    
+    // Weekly reset (next Sunday)
+    final daysUntilSunday = (7 - now.weekday) % 7;
+    final nextSunday = DateTime(now.year, now.month, now.day + (daysUntilSunday == 0 ? 7 : daysUntilSunday));
+    final weeklyDuration = nextSunday.difference(now);
+    final weeklyDays = weeklyDuration.inDays;
+    _weeklyResetTimer = weeklyDays > 0 
+        ? '$weeklyDays ${weeklyDays == 1 ? 'day' : 'days'} left'
+        : 'Resets today';
+    
+    setState(() {});
+  }
+
+  List<challenge_models.Challenge> _getChallengesByCategory(
+      badge_models.BadgeCategory category) {
+    final filtered = _challenges.where((challenge) => challenge.category == category).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+
+    if (filtered.isEmpty && _challenges.isEmpty) {
+      // Fallback to badge list if challenges have not been synced yet
+      return _allBadges
+          .where((badge) => badge.category == category)
+          .map(challenge_models.Challenge.fromBadge)
+          .toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    }
+
+    return filtered;
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return AppScaffold(
+        drawer: _AppDrawer(
+          onSelectTab: widget.onSelectTab,
+          currentScreenIndex: 2,
+        ),
+        appBar: AppBar(
+          title: const Text('Challenges'),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
     return AppScaffold(
       drawer: _AppDrawer(
         onSelectTab: widget.onSelectTab,
@@ -3623,202 +3883,252 @@ class _ChallengesTabState extends State<ChallengesTab> {
       appBar: AppBar(
         title: const Text('Challenges'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Daily Challenges Section
-            Row(
-              children: [
-                Icon(
-                  Icons.today,
-                  color: const Color(0xFFa92d35),
-                  size: 24,
+      body: RefreshIndicator(
+        onRefresh: _loadChallengesData,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Daily Challenges Section
+              _buildSectionHeader(
+                context,
+                icon: Icons.today,
+                title: 'Daily Challenges',
+                timer: _dailyResetTimer,
+              ),
+              const SizedBox(height: 12),
+              ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.daily)),
+              
+              const SizedBox(height: 24),
+              
+              // Weekly Challenges Section
+              _buildSectionHeader(
+                context,
+                icon: Icons.date_range,
+                title: 'Weekly Challenges',
+                timer: _weeklyResetTimer,
+              ),
+              const SizedBox(height: 12),
+              ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.weekly)),
+              
+              const SizedBox(height: 24),
+              
+              // Monthly Challenges Section
+              _buildSectionHeader(
+                context,
+                icon: Icons.calendar_month,
+                title: 'Monthly Challenges',
+                timer: _weeklyResetTimer, // Use weekly timer for now
+              ),
+              const SizedBox(height: 12),
+              ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.monthly)),
+              
+              const SizedBox(height: 24),
+              
+              // Streak Challenges Section
+              _buildSectionHeader(
+                context,
+                icon: Icons.local_fire_department,
+                title: 'Streak Challenges',
+                timer: null,
+              ),
+              const SizedBox(height: 12),
+              ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.streak)),
+              
+              const SizedBox(height: 24),
+              
+              // Milestone Challenges Section
+              _buildSectionHeader(
+                context,
+                icon: Icons.flag,
+                title: 'Milestone Challenges',
+                timer: null,
+              ),
+              const SizedBox(height: 12),
+              ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.milestone)),
+              
+              // Social Challenges (if any)
+              if (_getChallengesByCategory(badge_models.BadgeCategory.social).isNotEmpty) ...[
+                const SizedBox(height: 24),
+                _buildSectionHeader(
+                  context,
+                  icon: Icons.people,
+                  title: 'Social Challenges',
+                  timer: null,
                 ),
-                const SizedBox(width: 8),
-                Text(
-                  'Daily Challenges',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFa92d35).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    'Resets in 15h',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFFa92d35),
-                      fontWeight: FontWeight.w500,
+                const SizedBox(height: 12),
+                ..._buildChallengeCards(_getChallengesByCategory(badge_models.BadgeCategory.social)),
+              ],
+              
+              // Empty state if no badges
+              if (_challenges.isEmpty && _allBadges.isEmpty) ...[
+                const SizedBox(height: 24),
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.emoji_events_outlined,
+                          size: 64,
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No challenges available',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Badges will appear here once they are added to the system',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-            _buildChallengeCard(
-              context,
-              icon: Icons.phone_android,
-              title: 'Screen Time Goal',
-              description: 'Keep screen time under 3 hours today',
-              progress: 0.65,
-              reward: '+20 XP',
-              isCompleted: false,
-            ),
-            const SizedBox(height: 8),
-            _buildChallengeCard(
-              context,
-              icon: Icons.access_time,
-              title: 'Early Bird',
-              description: 'No phone usage before 8 AM',
-              progress: 1.0,
-              reward: '+15 XP',
-              isCompleted: true,
-            ),
-            const SizedBox(height: 8),
-            _buildChallengeCard(
-              context,
-              icon: Icons.app_blocking,
-              title: 'App Break',
-              description: 'Take a 30-min break from social media',
-              progress: 0.0,
-              reward: '+10 XP',
-              isCompleted: false,
-            ),
-            
-            const SizedBox(height: 24),
-            
-            // Weekly Challenges Section
-            Row(
-              children: [
-                Icon(
-                  Icons.date_range,
-                  color: const Color(0xFFa92d35),
-                  size: 24,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Weekly Challenges',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFa92d35).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '4 days left',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFFa92d35),
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildChallengeCard(
-              context,
-              icon: Icons.trending_down,
-              title: 'Weekly Reduction',
-              description: 'Reduce total screen time by 10% this week',
-              progress: 0.42,
-              reward: '+50 XP',
-              isCompleted: false,
-            ),
-            const SizedBox(height: 8),
-            _buildChallengeCard(
-              context,
-              icon: Icons.star,
-              title: 'Consistency King',
-              description: 'Complete all daily challenges for 5 days',
-              progress: 0.6,
-              reward: '+75 XP',
-              isCompleted: false,
-              progressText: '3/5 days',
-            ),
-            const SizedBox(height: 8),
-            _buildChallengeCard(
-              context,
-              icon: Icons.leaderboard,
-              title: 'Rank Climber',
-              description: 'Move up 5 positions in the rankings',
-              progress: 0.8,
-              reward: '+40 XP',
-              isCompleted: false,
-              progressText: '4/5 positions',
-            ),
-            
-            const SizedBox(height: 24),
-            
-            // Coming Soon Section
-            Text(
-              'Coming Soon',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.workspace_premium,
-                      color: const Color(0xFFa92d35),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Badge Challenges',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Unlock special badges by completing challenges',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
   
-  Widget _buildChallengeCard(
+  Widget _buildSectionHeader(
     BuildContext context, {
     required IconData icon,
     required String title,
-    required String description,
-    required double progress,
-    required String reward,
+    String? timer,
+  }) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          color: const Color(0xFFa92d35),
+          size: 24,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        if (timer != null) ...[
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFa92d35).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              timer,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: const Color(0xFFa92d35),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _buildChallengeCards(List<challenge_models.Challenge> challenges) {
+    if (challenges.isEmpty) {
+      return [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Center(
+              child: Text(
+                'No challenges in this category',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ];
+    }
+
+    return challenges.map((challenge) {
+      final badge = challenge.badge ?? challenge.toBadgeFallback();
+      final isEarned = _earnedBadgeIds.contains(challenge.badgeId);
+      final progress = _badgeProgress[challenge.badgeId] ?? 0.0;
+      
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8.0),
+        child: _buildBadgeChallengeCard(
+          context,
+          badge,
+          isEarned,
+          progress,
+          challenge: challenge,
+        ),
+      );
+    }).toList();
+  }
+
+  Widget _buildBadgeChallengeCard(
+    BuildContext context,
+    badge_models.Badge badge,
+    bool isEarned,
+    double progress,
+    {challenge_models.Challenge? challenge}
+  ) {
+    return _buildChallengeCard(
+      context,
+      badge: badge,
+      title: challenge?.title,
+      description: challenge?.description,
+      progress: progress,
+      isCompleted: isEarned,
+    );
+  }
+
+  Widget _buildChallengeCard(
+    BuildContext context, {
+    badge_models.Badge? badge,
+    IconData? icon,
+    String? title,
+    String? description,
+    double? progress,
+    String? reward,
     required bool isCompleted,
     String? progressText,
   }) {
+    // Use badge data if provided, otherwise use individual parameters (for backward compatibility)
+    final badgeTitle = title ?? badge?.name ?? 'Challenge';
+    final badgeDescription = description ?? badge?.description ?? '';
+    final badgeProgress = progress ?? 0.0;
+    final badgeReward = badge != null 
+        ? '+${badge.xpReward} XP'
+        : (reward ?? '+0 XP');
+    final badgeRarityColor = badge != null
+        ? BadgeIconHelper.getRarityColor(badge.rarity)
+        : const Color(0xFFa92d35);
+    
+    // Generate progress text based on badge type
+    String? generatedProgressText;
+    if (badge != null && !isCompleted) {
+      generatedProgressText = _getProgressText(badge, badgeProgress);
+    } else {
+      generatedProgressText = progressText;
+    }
+    
     const accentColor = Color(0xFFa92d35);
+    final displayColor = badge != null ? badgeRarityColor : accentColor;
     
     return Card(
       child: Padding(
@@ -3833,14 +4143,27 @@ class _ChallengesTabState extends State<ChallengesTab> {
                   decoration: BoxDecoration(
                     color: isCompleted 
                         ? Colors.green.withOpacity(0.1)
-                        : accentColor.withOpacity(0.1),
+                        : displayColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(
-                    isCompleted ? Icons.check_circle : icon,
-                    color: isCompleted ? Colors.green : accentColor,
-                    size: 24,
-                  ),
+                  child: isCompleted
+                      ? const Icon(
+                          Icons.check_circle,
+                          color: Colors.green,
+                          size: 24,
+                        )
+                      : badge != null
+                          ? BadgeIconHelper.getBadgeIcon(
+                              iconUrl: badge.iconUrl,
+                              category: badge.category,
+                              rarity: badge.rarity,
+                              size: 24,
+                            )
+                          : Icon(
+                              icon ?? Icons.emoji_events,
+                              color: displayColor,
+                              size: 24,
+                            ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -3848,71 +4171,146 @@ class _ChallengesTabState extends State<ChallengesTab> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
+                        badgeTitle,
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                           decoration: isCompleted ? TextDecoration.lineThrough : null,
                           color: isCompleted ? Colors.grey : null,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        description,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[600],
+                      if (badgeDescription.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          badgeDescription,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isCompleted 
-                        ? Colors.green.withOpacity(0.1)
-                        : accentColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(16),
+                    color: displayColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    isCompleted ? 'Done!' : reward,
+                    badgeReward,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: isCompleted ? Colors.green : accentColor,
+                      color: displayColor,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
               ],
             ),
-            if (!isCompleted) ...[
+            if (!isCompleted && badgeProgress < 1.0) ...[
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: progress,
-                        backgroundColor: Colors.grey[200],
-                        valueColor: AlwaysStoppedAnimation<Color>(accentColor),
-                        minHeight: 6,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    progressText ?? '${(progress * 100).toInt()}%',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: badgeProgress,
+                  minHeight: 6,
+                  backgroundColor: displayColor.withOpacity(0.1),
+                  valueColor: AlwaysStoppedAnimation<Color>(displayColor),
+                ),
               ),
+              if (generatedProgressText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  generatedProgressText,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
             ],
           ],
         ),
       ),
     );
+  }
+
+  String? _getProgressText(badge_models.Badge badge, double progress) {
+    if (badge.requiredValue == null) return null;
+    
+    switch (badge.category) {
+      case badge_models.BadgeCategory.daily:
+        if (_dailyScreenTimeMinutes != null) {
+          final current = _dailyScreenTimeMinutes!;
+          final required = badge.requiredValue!;
+          final currentHours = current ~/ 60;
+          final currentMins = current % 60;
+          final requiredHours = required ~/ 60;
+          final requiredMins = required % 60;
+          if (requiredHours > 0) {
+            return '${currentHours}h ${currentMins}m / ${requiredHours}h ${requiredMins}m';
+          }
+          return '${current}m / ${required}m';
+        }
+        return null;
+        
+      case badge_models.BadgeCategory.weekly:
+        if (_weeklyAverageMinutes != null) {
+          final current = _weeklyAverageMinutes!;
+          final required = badge.requiredValue!;
+          final currentHours = current ~/ 60;
+          final currentMins = current % 60;
+          final requiredHours = required ~/ 60;
+          final requiredMins = required % 60;
+          if (requiredHours > 0) {
+            return 'Avg: ${currentHours}h ${currentMins}m / ${requiredHours}h ${requiredMins}m';
+          }
+          return 'Avg: ${current}m / ${required}m';
+        }
+        return null;
+        
+      case badge_models.BadgeCategory.monthly:
+        if (_monthlyAverageMinutes != null) {
+          final current = _monthlyAverageMinutes!;
+          final required = badge.requiredValue!;
+          final currentHours = current ~/ 60;
+          final currentMins = current % 60;
+          final requiredHours = required ~/ 60;
+          final requiredMins = required % 60;
+          if (requiredHours > 0) {
+            return 'Avg: ${currentHours}h ${currentMins}m / ${requiredHours}h ${requiredMins}m';
+          }
+          return 'Avg: ${current}m / ${required}m';
+        }
+        return null;
+        
+      case badge_models.BadgeCategory.streak:
+        if (_currentStreak != null) {
+          return '${_currentStreak} / ${badge.requiredValue} days';
+        }
+        return '0 / ${badge.requiredValue} days';
+        
+      case badge_models.BadgeCategory.milestone:
+        if (badge.unlockConditions?['type'] == 'level') {
+          if (_level != null) {
+            return 'Level ${_level} / ${badge.requiredValue}';
+          }
+          return 'Level 0 / ${badge.requiredValue}';
+        } else if (badge.unlockConditions?['type'] == 'xp') {
+          if (_totalXP != null) {
+            return '${_totalXP} / ${badge.requiredValue} XP';
+          }
+          return '0 / ${badge.requiredValue} XP';
+        }
+        return null;
+        
+      case badge_models.BadgeCategory.social:
+        if (_friendCount != null) {
+          return '${_friendCount} / ${badge.requiredValue} friends';
+        }
+        return '0 / ${badge.requiredValue} friends';
+        
+      case badge_models.BadgeCategory.special:
+        return null;
+    }
   }
 }
 

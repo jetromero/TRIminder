@@ -103,41 +103,41 @@ class FirstTimeSetupService {
         }
       }
 
-      // Request exact alarm permission (Android 12+)
+      // Check exact alarm permission status but DON'T redirect to settings before login
+      // This permission request will be shown after user logs in
       if (Platform.isAndroid) {
         try {
           final androidInfo = await DeviceInfoPlugin().androidInfo;
           if (androidInfo.version.sdkInt >= 31) {
-            print('📱 Requesting exact alarm permission (Android 12+)...');
-            final exactAlarmGranted = await AndroidPermissionHelper.requestExactAlarmPermission();
+            print('📱 Checking exact alarm permission status (not requesting yet)...');
+            final exactAlarmGranted = await AndroidPermissionHelper.isExactAlarmPermissionGranted();
             if (exactAlarmGranted) {
-              print('✅ Exact alarm permission request launched');
+              print('✅ Exact alarm permission already granted');
             } else {
-              print('⚠️ Failed to launch exact alarm permission settings');
+              print('ℹ️ Exact alarm permission not granted - will prompt after login');
+              // Will be handled in permission status widget after login
             }
           }
         } catch (e) {
-          print('⚠️ Error requesting exact alarm permission: $e');
+          print('⚠️ Error checking exact alarm permission: $e');
         }
       }
 
-      // Check USAGE_STATS permission status and set pending flag if needed
-      // Note: We don't auto-request here - user will be prompted after login
+      // Check USAGE_STATS permission status but DON'T redirect to settings before login
+      // This permission request will be shown after user logs in via UsageStatsHelper
       if (Platform.isAndroid) {
         try {
-          print('📱 Checking USAGE_STATS permission...');
-          final status = await UsageStatsHelper.getUsageStatsStatus();
-          if (status.isGranted) {
-            print('✅ UsageStats permission granted - per-app tracking enabled');
+          print('📱 Checking USAGE_STATS permission status (not requesting yet)...');
+          final usageStatsGranted = await AndroidPermissionHelper.isUsageStatsPermissionGranted();
+          if (usageStatsGranted) {
+            print('✅ USAGE_STATS permission already granted');
           } else {
-            print('⚠️ UsageStats permission not granted - will prompt user after login');
-            // Set pending flag to show dialog after login
+            print('ℹ️ USAGE_STATS permission not granted - will prompt after login');
+            // Set pending flag so it will be prompted after login
             await UsageStatsHelper.setPromptPending();
           }
         } catch (e) {
-          print('⚠️ Error checking UsageStats permission: $e');
-          // Set pending flag anyway to ensure user sees the prompt
-          await UsageStatsHelper.setPromptPending();
+          print('⚠️ Error checking USAGE_STATS permission: $e');
         }
       }
 
