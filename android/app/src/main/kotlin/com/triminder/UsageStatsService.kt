@@ -170,7 +170,8 @@ class UsageStatsService(private val context: Context) {
             while (usageEvents.hasNextEvent()) {
                 val event = UsageEvents.Event()
                 if (usageEvents.getNextEvent(event)) {
-                    val isYouTube = event.packageName == "com.google.android.youtube"
+                    val isYouTube = event.packageName == "com.google.android.youtube" || 
+                                   event.packageName.startsWith("com.google.android.apps.youtube")
                     
                     // Filter out system apps and our own app
                     val isSystem = isSystemApp(event.packageName)
@@ -954,8 +955,9 @@ class UsageStatsService(private val context: Context) {
      * (like YouTube, Gmail) which should be tracked in app usage statistics.
      */
     private fun isSystemApp(packageName: String): Boolean {
-        // Debug logging for YouTube specifically
-        val isYouTube = packageName == "com.google.android.youtube"
+        // Debug logging for YouTube specifically (check multiple possible package names)
+        val isYouTube = packageName == "com.google.android.youtube" || 
+                       packageName.startsWith("com.google.android.apps.youtube")
         
         return try {
             // Try with version-specific flags first (more reliable on Android 11+)
@@ -1000,7 +1002,8 @@ class UsageStatsService(private val context: Context) {
             result
         } catch (e: SecurityException) {
             // Security exception on Android 11+ - use fallback method (same as getAppName/getAppIconBase64)
-            val isYouTube = packageName == "com.google.android.youtube"
+            val isYouTube = packageName == "com.google.android.youtube" || 
+                           packageName.startsWith("com.google.android.apps.youtube")
             if (isYouTube) {
                 Log.w("UsageStatsService", "⚠️ YouTube: SecurityException, using fallback method")
             }
@@ -1045,7 +1048,8 @@ class UsageStatsService(private val context: Context) {
             }
         } catch (e: Exception) {
             // Other exceptions - assume not a system app
-            val isYouTube = packageName == "com.google.android.youtube"
+            val isYouTube = packageName == "com.google.android.youtube" || 
+                           packageName.startsWith("com.google.android.apps.youtube")
             if (isYouTube) {
                 Log.w("UsageStatsService", "✅ YouTube: Exception ($e) - NOT filtering (allowing)")
             }
