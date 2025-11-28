@@ -178,6 +178,9 @@ TRIminder requires the following permissions for optimal functionality:
 - `lib/utils/app_hibernation_helper.dart`: App hibernation detection and guidance (Android 12+)
 - `lib/utils/android_permission_helper.dart`: Android version-specific permission handling
 
+### Supabase Configuration
+- Run all scripts in `supabase_migrations/` when provisioning a new backend. In particular, `supabase_migrations/allow_user_badge_reads.sql` must be executed so authenticated users can view badges on other profiles (the tables default to owner-only reads).
+
 ### Android Version Compatibility
 - **Android 8.0+ (API 26+)**: Full support with notification channels and background restrictions
 - **Android 12+ (API 31+)**: Exact alarm permission support for reliable timers, App Hibernation feature introduced (must be disabled)

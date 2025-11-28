@@ -86,3 +86,4 @@ SET
 -- SELECT * FROM public.challenges ORDER BY sort_order;
 -- SELECT c.id, c.title, b.name AS badge_name FROM public.challenges c JOIN public.badges b ON c.badge_id = b.id;
 
+
