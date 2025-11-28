@@ -933,12 +933,32 @@ class UsageStatsService(private val context: Context) {
     
     /**
      * Check if an app is a system app
+     * Uses version-specific flags and fallback to handle package visibility restrictions on Android 11+
      */
     private fun isSystemApp(packageName: String): Boolean {
         return try {
-            val applicationInfo = packageManager.getApplicationInfo(packageName, 0)
+            // Try with version-specific flags first (more reliable on Android 11+)
+            val flags = getVersionSpecificFlags()
+            val applicationInfo = packageManager.getApplicationInfo(packageName, flags)
             (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+        } catch (e: SecurityException) {
+            // Security exception on Android 11+ - use fallback method (same as getAppName/getAppIconBase64)
+            try {
+                val launchableApps = getLaunchableApps()
+                val resolveInfo = launchableApps[packageName]
+                if (resolveInfo != null && resolveInfo.activityInfo != null) {
+                    val applicationInfo = resolveInfo.activityInfo.applicationInfo
+                    (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                } else {
+                    // Can't determine - assume not a system app to avoid filtering out user apps
+                    false
+                }
+            } catch (_: Exception) {
+                // If fallback fails, assume not a system app
+                false
+            }
         } catch (e: Exception) {
+            // Other exceptions - assume not a system app
             false
         }
     }

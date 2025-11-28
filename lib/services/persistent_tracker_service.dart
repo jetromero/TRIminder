@@ -611,9 +611,6 @@ class PersistentTrackerService {
           final shouldUpdate = serviceData.lastNotificationUpdate == null ||
               nowTs.difference(serviceData.lastNotificationUpdate!) >= _foregroundNotificationInterval; // Throttle to every 5 minutes to reduce churn  
           if (shouldUpdate) {
-            final int hours = totalMinutes ~/ 60;
-            final int minutes = totalMinutes % 60;
-            final String timeStr = hours > 0 ? '${hours}h ${minutes}m' : '${minutes}m';
             try {
               // Minimal notification - IMPORTANCE_MIN only shows small icon in status bar
               service.setForegroundNotificationInfo(
