@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
 import '../models/user_models.dart';
+import '../models/badge_models.dart';
 import '../services/persistent_tracker_service.dart';
+import '../services/badge_leveling_service.dart';
 import '../utils/simplified_logger.dart';
 
 /// Automatic screen time tracker that detects phone screen state
@@ -207,6 +209,9 @@ class AutomaticScreenTracker extends ChangeNotifier {
           
           SimplifiedLogger.xp('End-of-day XP awarded: $finalXP XP for ${dayScreenTimeMinutes}m screen time');
         }
+
+        // Award badges with leveling logic
+        await _awardDailyBadgesForDate(date, dayScreenTimeMinutes);
       }
     } catch (e) {
       SimplifiedLogger.error('Error awarding end-of-day XP: $e');
@@ -263,6 +268,91 @@ class AutomaticScreenTracker extends ChangeNotifier {
     // No badges for excessive usage
     
     return badges;
+  }
+
+  /// Map badge name to badge ID
+  int _getBadgeIdFromName(String badgeName) {
+    switch (badgeName) {
+      case 'Digital Sage':
+        return 1;
+      case 'Mindful Master':
+        return 2;
+      case 'Balanced User':
+        return 3;
+      case 'Conscious User':
+        return 4;
+      default:
+        return 0;
+    }
+  }
+
+  /// Award daily badges for a specific date with leveling logic
+  Future<void> _awardDailyBadgesForDate(DateTime date, int screenTimeMinutes) async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        SimplifiedLogger.error('Cannot award badges: No user ID available');
+        return;
+      }
+
+      final db = DatabaseService();
+      final levelingService = BadgeLevelingService();
+      
+      // Get eligible badges based on screen time
+      final eligibleBadgeNames = _getDailyBadges(screenTimeMinutes);
+      
+      for (final badgeName in eligibleBadgeNames) {
+        final badgeId = _getBadgeIdFromName(badgeName);
+        if (badgeId == 0) continue; // Skip unknown badges
+
+        try {
+          // Check if badge already exists for user
+          final existingUserBadge = await db.getUserBadge(userId, badgeId);
+          
+          if (existingUserBadge != null) {
+            // Badge already exists - record completion and check for level up
+            final completionRecorded = await levelingService.recordDailyChallengeCompletion(
+              userId,
+              badgeId,
+              date,
+            );
+            
+            if (completionRecorded) {
+              // Check and level up badge
+              final levelUpInfo = await levelingService.checkAndLevelUpBadge(userId, badgeId);
+              
+              if (levelUpInfo['leveledUp'] == true) {
+                SimplifiedLogger.xp(
+                  'Badge leveled up: $badgeName from level ${levelUpInfo['oldLevel']} to ${levelUpInfo['newLevel']}'
+                );
+              }
+            }
+          } else {
+            // Badge doesn't exist - create new badge with level 1, completion_count 1
+            final newUserBadge = UserBadge(
+              userId: userId,
+              badgeId: badgeId,
+              awardedAt: date,
+              level: 1,
+              completionCount: 1,
+              isSynced: false,
+            );
+            
+            await db.insertUserBadge(newUserBadge);
+            
+            // Record completion in daily_challenge_completions
+            await levelingService.recordDailyChallengeCompletion(userId, badgeId, date);
+            
+            SimplifiedLogger.xp('New badge awarded: $badgeName (Level 1)');
+          }
+        } catch (e) {
+          SimplifiedLogger.error('Error awarding badge $badgeName: $e');
+          // Continue with other badges
+        }
+      }
+    } catch (e) {
+      SimplifiedLogger.error('Error in _awardDailyBadgesForDate: $e');
+    }
   }
 
   /// Update user's daily XP in profile (only called at end of day)

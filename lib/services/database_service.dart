@@ -24,7 +24,7 @@ class DatabaseService {
     
     return await openDatabase(
       path,
-      version: 3, // Incremented for badge system migration
+      version: 4, // Incremented for badge leveling system
       onCreate: _createTables,
       onUpgrade: (db, oldVersion, newVersion) async {
         // Run migrations on upgrade
@@ -85,6 +85,7 @@ class DatabaseService {
         requiredValue INTEGER,
         xpReward INTEGER NOT NULL DEFAULT 0,
         unlockConditions TEXT,
+        levelThresholds TEXT,
         createdAt TEXT NOT NULL
       )
     ''');
@@ -104,6 +105,8 @@ class DatabaseService {
         userId TEXT NOT NULL,
         badgeId INTEGER NOT NULL,
         earnedAt TEXT NOT NULL,
+        level INTEGER NOT NULL DEFAULT 1,
+        completionCount INTEGER NOT NULL DEFAULT 1,
         isSynced INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (userId) REFERENCES user_profiles (id),
         FOREIGN KEY (badgeId) REFERENCES badges (id)
@@ -160,6 +163,21 @@ class DatabaseService {
       )
     ''');
 
+    // Daily challenge completions table (for badge leveling)
+    await db.execute('''
+      CREATE TABLE daily_challenge_completions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId TEXT NOT NULL,
+        badgeId INTEGER NOT NULL,
+        completionDate TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        isSynced INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (userId) REFERENCES user_profiles (id),
+        FOREIGN KEY (badgeId) REFERENCES badges (id),
+        UNIQUE(userId, badgeId, completionDate)
+      )
+    ''');
+
     // Add performance indexes
     await db.execute('CREATE INDEX idx_screen_time_user_date ON screen_time_entries(userId, startTime)');
     await db.execute('CREATE INDEX idx_screen_time_synced ON screen_time_entries(isSynced)');
@@ -167,6 +185,8 @@ class DatabaseService {
     await db.execute('CREATE INDEX idx_xp_award_history_user_date ON xp_award_history(userId, awardDate)');
     await db.execute('CREATE INDEX idx_xp_award_history_synced ON xp_award_history(isSynced)');
     await db.execute('CREATE INDEX idx_app_usage_user_date ON app_usage_logs(userId, date)');
+    await db.execute('CREATE INDEX idx_daily_completions_user_badge ON daily_challenge_completions(userId, badgeId)');
+    await db.execute('CREATE INDEX idx_daily_completions_date ON daily_challenge_completions(completionDate DESC)');
     
     // Add unique constraint to prevent duplicate XP awards per user per day
     try {
@@ -567,6 +587,75 @@ class DatabaseService {
       } catch (e) {
         print('⚠️ Error migrating user_badges table: $e');
       }
+
+      // Migration: Badge leveling system (version 4)
+      try {
+        // Check badges table for levelThresholds column
+        final badgeTableInfo = await db.rawQuery('PRAGMA table_info(badges)');
+        final badgeColumns = badgeTableInfo.map((c) => (c['name'] as String?)).toSet();
+        
+        if (!badgeColumns.contains('levelThresholds')) {
+          print('🔄 Adding levelThresholds column to badges table...');
+          await db.execute('ALTER TABLE badges ADD COLUMN levelThresholds TEXT');
+          print('✅ levelThresholds column added to badges');
+        }
+
+        // Check user_badges table for level and completionCount columns
+        final userBadgesTableInfo = await db.rawQuery('PRAGMA table_info(user_badges)');
+        final userBadgesColumns = userBadgesTableInfo.map((c) => (c['name'] as String?)).toSet();
+        
+        if (!userBadgesColumns.contains('level')) {
+          print('🔄 Adding level column to user_badges table...');
+          await db.execute('ALTER TABLE user_badges ADD COLUMN level INTEGER NOT NULL DEFAULT 1');
+          print('✅ level column added to user_badges');
+        }
+        
+        if (!userBadgesColumns.contains('completionCount')) {
+          print('🔄 Adding completionCount column to user_badges table...');
+          await db.execute('ALTER TABLE user_badges ADD COLUMN completionCount INTEGER NOT NULL DEFAULT 1');
+          print('✅ completionCount column added to user_badges');
+        }
+
+        // Set existing badges to level 1, completion_count 1
+        if (userBadgesColumns.contains('level') || userBadgesColumns.contains('completionCount')) {
+          try {
+            await db.execute('''
+              UPDATE user_badges 
+              SET level = 1, completionCount = 1 
+              WHERE level IS NULL OR completionCount IS NULL
+            ''');
+            print('✅ Set existing badges to level 1, completion_count 1');
+          } catch (e) {
+            print('⚠️ Error updating existing badges: $e');
+          }
+        }
+
+        // Check if daily_challenge_completions table exists
+        final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='daily_challenge_completions'"
+        );
+        if (tables.isEmpty) {
+          print('🔄 Creating daily_challenge_completions table...');
+          await db.execute('''
+            CREATE TABLE daily_challenge_completions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              userId TEXT NOT NULL,
+              badgeId INTEGER NOT NULL,
+              completionDate TEXT NOT NULL,
+              createdAt TEXT NOT NULL,
+              isSynced INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (userId) REFERENCES user_profiles (id),
+              FOREIGN KEY (badgeId) REFERENCES badges (id),
+              UNIQUE(userId, badgeId, completionDate)
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_daily_completions_user_badge ON daily_challenge_completions(userId, badgeId)');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_daily_completions_date ON daily_challenge_completions(completionDate DESC)');
+          print('✅ daily_challenge_completions table created');
+        }
+      } catch (e) {
+        print('⚠️ Error migrating badge leveling system: $e');
+      }
     } catch (e) {
       AppLogger.warning('Migration check failed', 'migrate', e);
     }
@@ -836,6 +925,12 @@ class DatabaseService {
         userId: map['userId']?.toString() ?? '',
         badgeId: badgeId,
         awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        level: map['level'] is int
+            ? map['level']
+            : (map['level'] != null ? int.tryParse(map['level'].toString()) ?? 1 : 1),
+        completionCount: map['completionCount'] is int
+            ? map['completionCount']
+            : (map['completionCount'] != null ? int.tryParse(map['completionCount'].toString()) ?? 1 : 1),
         isSynced: (map['isSynced'] as int? ?? 0) == 1,
       );
     });
@@ -870,6 +965,8 @@ class DatabaseService {
       'userId': userBadge.userId,
       'badgeId': userBadge.badgeId,
       'earnedAt': userBadge.awardedAt.toIso8601String(), // Map awardedAt to earnedAt
+      'level': userBadge.level,
+      'completionCount': userBadge.completionCount,
       'isSynced': userBadge.isSynced ? 1 : 0,
     };
     return await db.insert(
@@ -891,6 +988,8 @@ class DatabaseService {
       'xpReward': badge.xpReward,
       'unlockConditions':
           badge.unlockConditions != null ? jsonEncode(badge.unlockConditions) : null,
+      'levelThresholds':
+          badge.levelThresholds != null ? jsonEncode(badge.levelThresholds) : null,
       'createdAt': DateTime.now().toIso8601String(),
     };
   }
@@ -913,18 +1012,26 @@ class DatabaseService {
             ? map['badgeId']
             : int.tryParse(map['badgeId']?.toString() ?? '0') ?? 0,
         awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        level: map['level'] is int
+            ? map['level']
+            : (map['level'] != null ? int.tryParse(map['level'].toString()) ?? 1 : 1),
+        completionCount: map['completionCount'] is int
+            ? map['completionCount']
+            : (map['completionCount'] != null ? int.tryParse(map['completionCount'].toString()) ?? 1 : 1),
         isSynced: (map['isSynced'] as int? ?? 0) == 1,
       );
     });
   }
 
-  /// Update user badge (mainly for synced status)
+  /// Update user badge (mainly for synced status, level, and completion count)
   Future<int> updateUserBadge(UserBadge userBadge) async {
     final db = await database;
     final map = {
       'userId': userBadge.userId,
       'badgeId': userBadge.badgeId,
       'earnedAt': userBadge.awardedAt.toIso8601String(),
+      'level': userBadge.level,
+      'completionCount': userBadge.completionCount,
       'isSynced': userBadge.isSynced ? 1 : 0,
     };
     return await db.update(
@@ -953,6 +1060,12 @@ class DatabaseService {
             ? map['badgeId']
             : int.tryParse(map['badgeId']?.toString() ?? '0') ?? 0,
         awardedAt: DateTime.parse(map['earnedAt']?.toString() ?? DateTime.now().toIso8601String()),
+        level: map['level'] is int
+            ? map['level']
+            : (map['level'] != null ? int.tryParse(map['level'].toString()) ?? 1 : 1),
+        completionCount: map['completionCount'] is int
+            ? map['completionCount']
+            : (map['completionCount'] != null ? int.tryParse(map['completionCount'].toString()) ?? 1 : 1),
         isSynced: (map['isSynced'] as int? ?? 0) == 1,
       );
     }
@@ -1363,5 +1476,130 @@ class DatabaseService {
     );
     if (maps.isEmpty) return null;
     return ScreenTimeLog.fromMap(maps.first);
+  }
+
+  // ============================================
+  // Daily Challenge Completions Methods
+  // ============================================
+
+  /// Insert a daily challenge completion
+  Future<int> insertDailyChallengeCompletion(
+    String userId,
+    int badgeId,
+    DateTime completionDate,
+  ) async {
+    try {
+      final db = await database;
+      final dateStr = completionDate.toIso8601String().split('T')[0]; // YYYY-MM-DD
+      
+      return await db.insert(
+        'daily_challenge_completions',
+        {
+          'userId': userId,
+          'badgeId': badgeId,
+          'completionDate': dateStr,
+          'createdAt': DateTime.now().toIso8601String(),
+          'isSynced': 0,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore, // Ignore duplicates
+      );
+    } catch (e) {
+      print('❌ Error inserting daily challenge completion: $e');
+      rethrow;
+    }
+  }
+
+  /// Get all completions for a specific badge
+  Future<List<Map<String, dynamic>>> getDailyChallengeCompletions(
+    String userId,
+    int badgeId,
+  ) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'daily_challenge_completions',
+        where: 'userId = ? AND badgeId = ?',
+        whereArgs: [userId, badgeId],
+        orderBy: 'completionDate DESC',
+      );
+      return maps;
+    } catch (e) {
+      print('❌ Error getting daily challenge completions: $e');
+      return [];
+    }
+  }
+
+  /// Get completion count for a specific badge
+  Future<int> getCompletionCountForBadge(
+    String userId,
+    int badgeId,
+  ) async {
+    try {
+      final db = await database;
+      final result = await db.rawQuery(
+        'SELECT COUNT(*) as count FROM daily_challenge_completions WHERE userId = ? AND badgeId = ?',
+        [userId, badgeId],
+      );
+      return result.first['count'] as int? ?? 0;
+    } catch (e) {
+      print('❌ Error getting completion count: $e');
+      return 0;
+    }
+  }
+
+  /// Check if a completion exists for a specific date
+  Future<bool> hasCompletionForDate(
+    String userId,
+    int badgeId,
+    DateTime date,
+  ) async {
+    try {
+      final db = await database;
+      final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD
+      final maps = await db.query(
+        'daily_challenge_completions',
+        where: 'userId = ? AND badgeId = ? AND completionDate = ?',
+        whereArgs: [userId, badgeId, dateStr],
+        limit: 1,
+      );
+      return maps.isNotEmpty;
+    } catch (e) {
+      print('❌ Error checking completion for date: $e');
+      return false;
+    }
+  }
+
+  /// Get unsynced daily challenge completions
+  Future<List<Map<String, dynamic>>> getUnsyncedDailyChallengeCompletions(
+    String userId,
+  ) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        'daily_challenge_completions',
+        where: 'userId = ? AND isSynced = ?',
+        whereArgs: [userId, 0],
+        orderBy: 'createdAt ASC',
+      );
+      return maps;
+    } catch (e) {
+      print('❌ Error getting unsynced completions: $e');
+      return [];
+    }
+  }
+
+  /// Mark a completion as synced
+  Future<void> markDailyChallengeCompletionAsSynced(int id) async {
+    try {
+      final db = await database;
+      await db.update(
+        'daily_challenge_completions',
+        {'isSynced': 1},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    } catch (e) {
+      print('❌ Error marking completion as synced: $e');
+    }
   }
 }

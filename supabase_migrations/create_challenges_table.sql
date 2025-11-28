@@ -4,16 +4,16 @@
 -- ============================================================================
 -- Ensure default badges exist (used by challenges)
 -- ============================================================================
-INSERT INTO public.badges (id, name, description, category, rarity, required_value, xp_reward, unlock_conditions)
+INSERT INTO public.badges (id, name, description, category, rarity, required_value, xp_reward, unlock_conditions, level_thresholds)
 VALUES
-  (1, 'Digital Sage', 'Keep screen time under 2 hours today', 'daily', 'rare', 120, 50, '{"type": "daily", "threshold": 120}'),
-  (2, 'Mindful Master', 'Keep screen time under 4 hours today', 'daily', 'common', 240, 25, '{"type": "daily", "threshold": 240}'),
-  (3, 'Balanced User', 'Keep screen time under 6 hours today', 'daily', 'common', 360, 15, '{"type": "daily", "threshold": 360}'),
-  (4, 'Conscious User', 'Keep screen time under 8 hours today', 'daily', 'common', 480, 10, '{"type": "daily", "threshold": 480}'),
-  (10, 'Week Warrior', 'Maintain healthy screen time for 7 consecutive days', 'streak', 'rare', 7, 100, '{"type": "streak", "days": 7}'),
-  (11, 'Month Master', 'Maintain healthy screen time for 30 consecutive days', 'streak', 'epic', 30, 500, '{"type": "streak", "days": 30}'),
-  (20, 'Level 10 Champion', 'Reach level 10', 'milestone', 'common', 10, 200, '{"type": "level", "level": 10}'),
-  (21, 'Level 25 Hero', 'Reach level 25', 'milestone', 'rare', 25, 500, '{"type": "level", "level": 25}')
+  (1, 'Digital Sage', 'Keep screen time under 2 hours today', 'daily', 'rare', 120, 50, '{"type": "daily", "threshold": 120}', '[1, 3, 7, 15, 30]'::jsonb),
+  (2, 'Mindful Master', 'Keep screen time under 4 hours today', 'daily', 'common', 240, 25, '{"type": "daily", "threshold": 240}', '[1, 5, 10, 20, 40]'::jsonb),
+  (3, 'Balanced User', 'Keep screen time under 6 hours today', 'daily', 'common', 360, 15, '{"type": "daily", "threshold": 360}', '[1, 5, 10, 25, 50]'::jsonb),
+  (4, 'Conscious User', 'Keep screen time under 8 hours today', 'daily', 'common', 480, 10, '{"type": "daily", "threshold": 480}', '[1, 5, 10, 25, 50]'::jsonb),
+  (10, 'Week Warrior', 'Maintain healthy screen time for 7 consecutive days', 'streak', 'rare', 7, 100, '{"type": "streak", "days": 7}', NULL),
+  (11, 'Month Master', 'Maintain healthy screen time for 30 consecutive days', 'streak', 'epic', 30, 500, '{"type": "streak", "days": 30}', NULL),
+  (20, 'Level 10 Champion', 'Reach level 10', 'milestone', 'common', 10, 200, '{"type": "level", "level": 10}', NULL),
+  (21, 'Level 25 Hero', 'Reach level 25', 'milestone', 'rare', 25, 500, '{"type": "level", "level": 25}', NULL)
 ON CONFLICT (id) DO UPDATE
 SET
   name = EXCLUDED.name,
@@ -22,7 +22,8 @@ SET
   rarity = EXCLUDED.rarity,
   required_value = EXCLUDED.required_value,
   xp_reward = EXCLUDED.xp_reward,
-  unlock_conditions = EXCLUDED.unlock_conditions;
+  unlock_conditions = EXCLUDED.unlock_conditions,
+  level_thresholds = EXCLUDED.level_thresholds;
 
 -- ============================================================================
 -- CHALLENGES TABLE

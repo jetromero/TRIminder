@@ -73,12 +73,20 @@ class BadgeGridWidget extends StatelessWidget {
         final badgeData = badges[index];
         final badge = badgeData['badge'] as Map<String, dynamic>;
         final awardedAt = badgeData['awardedAt'] as DateTime;
+        final level = badgeData['level'] is int 
+            ? badgeData['level'] 
+            : (badgeData['level'] != null ? int.tryParse(badgeData['level'].toString()) ?? 1 : 1);
+        final completionCount = badgeData['completionCount'] is int 
+            ? badgeData['completionCount'] 
+            : (badgeData['completionCount'] != null ? int.tryParse(badgeData['completionCount'].toString()) ?? 1 : 1);
 
         return _BadgeItem(
           name: badge['name'] as String? ?? 'Unknown',
           description: badge['description'] as String?,
           iconUrl: badge['iconUrl'] as String?,
           awardedAt: awardedAt,
+          level: level,
+          completionCount: completionCount,
         );
       },
     );
@@ -90,18 +98,27 @@ class _BadgeItem extends StatelessWidget {
   final String? description;
   final String? iconUrl;
   final DateTime awardedAt;
+  final int level;
+  final int completionCount;
 
   const _BadgeItem({
     required this.name,
     this.description,
     this.iconUrl,
     required this.awardedAt,
+    this.level = 1,
+    this.completionCount = 1,
   });
 
   @override
   Widget build(BuildContext context) {
+    final levelText = level > 1 ? ' Lv.$level' : '';
+    final tooltipMessage = level > 1 
+        ? '${description ?? name}\nLevel $level ($completionCount completions)'
+        : (description ?? name);
+
     return Tooltip(
-      message: description ?? name,
+      message: tooltipMessage,
       child: Card(
         elevation: 2,
         child: Padding(
@@ -109,25 +126,50 @@ class _BadgeItem extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Badge icon
+              // Badge icon with level indicator
               Expanded(
-                child: iconUrl != null && iconUrl!.isNotEmpty
-                    ? Image.network(
-                        iconUrl!,
-                        errorBuilder: (context, error, stackTrace) {
-                          return _buildDefaultIcon();
-                        },
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-                        },
-                      )
-                    : _buildDefaultIcon(),
+                child: Stack(
+                  children: [
+                    iconUrl != null && iconUrl!.isNotEmpty
+                        ? Image.network(
+                            iconUrl!,
+                            errorBuilder: (context, error, stackTrace) {
+                              return _buildDefaultIcon();
+                            },
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                            },
+                          )
+                        : _buildDefaultIcon(),
+                    // Level badge indicator
+                    if (level > 1)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '$level',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(height: 4),
-              // Badge name
+              // Badge name with level
               Text(
-                name,
+                '$name$levelText',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),

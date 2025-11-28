@@ -14,6 +14,7 @@ class BadgeDefinitions {
         requiredValue: 120, // minutes
         xpReward: 50,
         unlockConditions: {'type': 'daily', 'threshold': 120},
+        levelThresholds: [1, 3, 7, 15, 30], // Level thresholds for rare badge
       ),
       Badge(
         id: 2,
@@ -24,6 +25,7 @@ class BadgeDefinitions {
         requiredValue: 240, // minutes
         xpReward: 25,
         unlockConditions: {'type': 'daily', 'threshold': 240},
+        levelThresholds: [1, 5, 10, 20, 40], // Level thresholds for common badge
       ),
       Badge(
         id: 3,
@@ -34,6 +36,7 @@ class BadgeDefinitions {
         requiredValue: 360, // minutes
         xpReward: 15,
         unlockConditions: {'type': 'daily', 'threshold': 360},
+        levelThresholds: [1, 5, 10, 25, 50], // Level thresholds for common badge
       ),
       Badge(
         id: 4,
@@ -44,6 +47,7 @@ class BadgeDefinitions {
         requiredValue: 480, // minutes
         xpReward: 10,
         unlockConditions: {'type': 'daily', 'threshold': 480},
+        levelThresholds: [1, 5, 10, 25, 50], // Level thresholds for common badge
       ),
 
       // Streak Badges - Consecutive days of healthy screen time

@@ -473,12 +473,15 @@ class SupabaseService {
           .select('''
             badge_id,
             awarded_at,
+            level,
+            completion_count,
             badges (
               id,
               name,
               description,
               icon_url,
-              xp_reward
+              xp_reward,
+              level_thresholds
             )
           ''')
           .eq('user_id', userId)
@@ -491,12 +494,15 @@ class SupabaseService {
           badges.add({
             'badgeId': item['badge_id'],
             'awardedAt': DateTime.parse(item['awarded_at']),
+            'level': item['level'] is int ? item['level'] : (item['level'] != null ? int.tryParse(item['level'].toString()) ?? 1 : 1),
+            'completionCount': item['completion_count'] is int ? item['completion_count'] : (item['completion_count'] != null ? int.tryParse(item['completion_count'].toString()) ?? 1 : 1),
             'badge': {
               'id': badgeData['id'],
               'name': badgeData['name'],
               'description': badgeData['description'],
               'iconUrl': badgeData['icon_url'],
               'xpReward': badgeData['xp_reward'],
+              'levelThresholds': badgeData['level_thresholds'],
             },
           });
         }
@@ -1202,6 +1208,81 @@ class SupabaseService {
     } catch (e) {
       print('Error inserting user badge: $e');
       return null;
+    }
+  }
+
+  /// Update user badge (for level and completion count updates)
+  Future<UserBadge?> updateUserBadge(UserBadge userBadge) async {
+    if (!isAuthenticated) return null;
+
+    try {
+      final data = userBadge.toJson();
+      data['user_id'] = currentUserId;
+
+      final response = await _client
+          .from('user_badges')
+          .update(data)
+          .eq('user_id', userBadge.userId)
+          .eq('badge_id', userBadge.badgeId)
+          .select()
+          .single();
+
+      return UserBadge.fromJson(response);
+    } catch (e) {
+      print('Error updating user badge: $e');
+      return null;
+    }
+  }
+
+  /// Insert a daily challenge completion
+  Future<bool> insertDailyChallengeCompletion(
+    String userId,
+    int badgeId,
+    DateTime date,
+  ) async {
+    if (!isAuthenticated) return false;
+
+    try {
+      final dateStr = date.toIso8601String().split('T')[0]; // YYYY-MM-DD
+      
+      await _client
+          .from('daily_challenge_completions')
+          .insert({
+            'user_id': userId,
+            'badge_id': badgeId,
+            'completion_date': dateStr,
+          });
+
+      return true;
+    } catch (e) {
+      // Ignore duplicate errors (unique constraint)
+      if (e.toString().contains('duplicate') || e.toString().contains('unique')) {
+        return false;
+      }
+      print('Error inserting daily challenge completion: $e');
+      return false;
+    }
+  }
+
+  /// Get daily challenge completions for a badge
+  Future<List<Map<String, dynamic>>> getDailyChallengeCompletions(
+    String userId,
+    int badgeId,
+  ) async {
+    if (!isAuthenticated) return [];
+
+    try {
+      final response = await _client
+          .from('daily_challenge_completions')
+          .select()
+          .eq('user_id', userId)
+          .eq('badge_id', badgeId)
+          .order('completion_date', ascending: false);
+
+      return (response as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      print('Error getting daily challenge completions: $e');
+      return [];
     }
   }
 

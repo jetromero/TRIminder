@@ -27,6 +27,7 @@ import '../../models/app_usage_models.dart';
 import '../../services/usage_stats_service.dart';
 import '../../models/badge_models.dart' as badge_models;
 import '../../models/challenge_models.dart' as challenge_models;
+import '../badges/badge_catalog_screen.dart';
 import '../../services/badge_service.dart';
 import '../../services/challenge_service.dart';
 import '../../utils/badge_icon_helper.dart';
@@ -3624,6 +3625,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
   List<challenge_models.Challenge> _challenges = [];
   Set<int> _earnedBadgeIds = {};
   Map<int, double> _badgeProgress = {};
+  Map<int, int> _badgeLevels = {}; // badgeId -> level
+  Map<int, int> _badgeCompletionCounts = {}; // badgeId -> completion count
   
   // Screen time stats
   int? _dailyScreenTimeMinutes;
@@ -3682,12 +3685,21 @@ class _ChallengesTabState extends State<ChallengesTab> {
       final db = DatabaseService();
       final userBadges = await db.getUserBadges(userId);
       final earnedIds = userBadges.map((b) => b.badgeId).toSet();
+      final badgeLevels = <int, int>{};
+      final badgeCompletionCounts = <int, int>{};
+      
+      for (final userBadge in userBadges) {
+        badgeLevels[userBadge.badgeId] = userBadge.level;
+        badgeCompletionCounts[userBadge.badgeId] = userBadge.completionCount;
+      }
       
       if (mounted) {
         setState(() {
           _challenges = challenges;
           _allBadges = allBadges;
           _earnedBadgeIds = earnedIds;
+          _badgeLevels = badgeLevels;
+          _badgeCompletionCounts = badgeCompletionCounts;
         });
       }
     } catch (e) {
@@ -3882,6 +3894,21 @@ class _ChallengesTabState extends State<ChallengesTab> {
       ),
       appBar: AppBar(
         title: const Text('Challenges'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.collections),
+            tooltip: 'View Badge Catalog',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => BadgeCatalogScreen(
+                    onSelectTab: widget.onSelectTab,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadChallengesData,
@@ -4066,6 +4093,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
       final badge = challenge.badge ?? challenge.toBadgeFallback();
       final isEarned = _earnedBadgeIds.contains(challenge.badgeId);
       final progress = _badgeProgress[challenge.badgeId] ?? 0.0;
+      final level = _badgeLevels[challenge.badgeId] ?? 1;
+      final completionCount = _badgeCompletionCounts[challenge.badgeId] ?? 0;
       
       return Padding(
         padding: const EdgeInsets.only(bottom: 8.0),
@@ -4075,6 +4104,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
           isEarned,
           progress,
           challenge: challenge,
+          level: level,
+          completionCount: completionCount,
         ),
       );
     }).toList();
@@ -4085,7 +4116,9 @@ class _ChallengesTabState extends State<ChallengesTab> {
     badge_models.Badge badge,
     bool isEarned,
     double progress,
-    {challenge_models.Challenge? challenge}
+    {challenge_models.Challenge? challenge,
+    int level = 1,
+    int completionCount = 0}
   ) {
     return _buildChallengeCard(
       context,
@@ -4094,6 +4127,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
       description: challenge?.description,
       progress: progress,
       isCompleted: isEarned,
+      level: level,
+      completionCount: completionCount,
     );
   }
 
@@ -4107,6 +4142,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
     String? reward,
     required bool isCompleted,
     String? progressText,
+    int level = 1,
+    int completionCount = 0,
   }) {
     // Use badge data if provided, otherwise use individual parameters (for backward compatibility)
     final badgeTitle = title ?? badge?.name ?? 'Challenge';
@@ -4125,6 +4162,22 @@ class _ChallengesTabState extends State<ChallengesTab> {
       generatedProgressText = _getProgressText(badge, badgeProgress);
     } else {
       generatedProgressText = progressText;
+    }
+    
+    // Add level information for earned badges
+    if (isCompleted && level > 1) {
+      final levelText = 'Level $level';
+      if (badge?.levelThresholds != null && badge!.levelThresholds!.isNotEmpty) {
+        final thresholds = badge.levelThresholds!;
+        final nextLevelThreshold = level <= thresholds.length ? thresholds[level - 1] : null;
+        if (nextLevelThreshold != null) {
+          generatedProgressText = '$levelText ($completionCount/$nextLevelThreshold completions)';
+        } else {
+          generatedProgressText = '$levelText ($completionCount completions)';
+        }
+      } else {
+        generatedProgressText = '$levelText ($completionCount completions)';
+      }
     }
     
     const accentColor = Color(0xFFa92d35);
@@ -4170,13 +4223,37 @@ class _ChallengesTabState extends State<ChallengesTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        badgeTitle,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          decoration: isCompleted ? TextDecoration.lineThrough : null,
-                          color: isCompleted ? Colors.grey : null,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              badgeTitle,
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                decoration: isCompleted ? TextDecoration.lineThrough : null,
+                                color: isCompleted ? Colors.grey : null,
+                              ),
+                            ),
+                          ),
+                          if (isCompleted && level > 1) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Lv.$level',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       if (badgeDescription.isNotEmpty) ...[
                         const SizedBox(height: 2),
