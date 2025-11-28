@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -147,8 +148,8 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Dashboard',
+            icon: Icon(Icons.home),
+            label: 'Home',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.leaderboard),
@@ -432,213 +433,17 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   List<Widget> _getDashboardWidgets() {
     return [
+      // Greeting Header
+      _GreetingWidget(userProfile: userProfile),
       
-      // Welcome Section
-      WelcomeCard(
-        userProfile: userProfile,
-        isNewUser: widget.isNewUser,
-      ),
+      // Usage Graph
+      const _UsageGraphWidget(),
       
-      // Automatic Screen Time Tracker  
-      const AutomaticTrackerDisplay(),
+      // Level and Screen Time side by side
+      _LevelAndScreenTimeRow(userProfile: userProfile),
       
-      // XP Progress
-      XPProgressCard(userProfile: userProfile),
-      
-      // Recent Badges
-      const RecentBadgesCard(),
-      
-      // Top Offenders List (App Usage)
+      // Main Offenders List (App Usage)
       TopOffendersCard(key: _topOffendersKey),
-      
-      // Sync Status (for monitoring data sync)
-      const SyncStatusWidget(),
-      
-      // Debug Panel (temporary for testing)
-      Card(
-        child: Padding(
-          padding: ResponsiveUtils.getCardPadding(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Debug Panel', 
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 16, desktop: 20)),
-              
-              // Responsive button grid
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isSmallScreen = constraints.maxWidth < 600;
-                  final isMediumScreen = constraints.maxWidth >= 600 && constraints.maxWidth < 900;
-                  
-                  // Determine buttons per row based on screen size
-                  int buttonsPerRow;
-                  if (isSmallScreen) {
-                    buttonsPerRow = 2; // 2 buttons per row on mobile
-                  } else if (isMediumScreen) {
-                    buttonsPerRow = 3; // 3 buttons per row on tablet
-                  } else {
-                    buttonsPerRow = 4; // 4 buttons per row on desktop
-                  }
-                  
-                  // Define all debug buttons
-                  final debugButtons = [
-                    _DebugButton(
-                      label: 'Auth',
-                      onPressed: () async => await DebugHelper.checkAuthStatus(),
-                      icon: Icons.security,
-                    ),
-                    _DebugButton(
-                      label: 'Check DB',
-                      onPressed: () async => await DebugHelper.checkDatabaseContent(),
-                      icon: Icons.storage,
-                    ),
-                    _DebugButton(
-                      label: 'Test Track',
-                      onPressed: () async => await DebugHelper.testScreenTimeTracking(),
-                      icon: Icons.track_changes,
-                    ),
-                    _DebugButton(
-                      label: 'Add Test',
-                    onPressed: () async {
-                      await DebugHelper.addTestScreenTimeEntry();
-                      await _automaticTracker.refreshTodayData();
-                        setState(() {});
-                    },
-                      icon: Icons.add,
-                  ),
-                    _DebugButton(
-                      label: 'Check Service',
-                      onPressed: () async {
-                        await _checkAndRestartService();
-                      },
-                      icon: Icons.engineering,
-                    ),
-                                                    _DebugButton(
-                                  label: 'Check Setup',
-              onPressed: () async {
-                                    final setupStatus = await FirstTimeSetupService.checkSetupStatus();
-                                    print('🔧 Setup Status: $setupStatus');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Setup: ${setupStatus['backgroundConfigured'] ? 'Configured' : 'Needs Setup'}'),
-                                        duration: const Duration(seconds: 3),
-                                      ),
-                                    );
-                                  },
-                                  icon: Icons.settings,
-                                ),
-                                _DebugButton(
-                                  label: 'Manual Refresh',
-                    onPressed: () async {
-                                    await _manualRefresh();
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Manual refresh completed'),
-                                        duration: const Duration(seconds: 2),
-                                      ),
-                                    );
-                                  },
-                                  icon: Icons.refresh,
-                                ),
-                    _DebugButton(
-                      label: 'Old Sync',
-                      onPressed: () async => await DebugHelper.testBidirectionalSync(),
-                      icon: Icons.sync,
-                    ),
-                                         _DebugButton(
-                       label: 'Session',
-                       onPressed: () async => await DebugHelper.checkSessionStatus(),
-                       icon: Icons.access_time,
-                     ),
-                    _DebugButton(
-                      label: 'Save Session',
-              onPressed: () async {
-                await DebugHelper.saveCurrentSessionManually();
-                await _automaticTracker.refreshTodayData();
-                        setState(() {});
-              },
-                      icon: Icons.save,
-            ),
-                    _DebugButton(
-                      label: 'Clear Data',
-              onPressed: () async {
-                final confirmed = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Clear All Data'),
-                    content: const Text('This will delete all local data. Are you sure?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(false),
-                        child: const Text('Cancel'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(true),
-                        child: const Text('Clear'),
-                      ),
-                    ],
-                  ),
-                );
-                
-                if (confirmed == true) {
-                  await DebugHelper.clearAllLocalData();
-                          setState(() {});
-                        }
-                      },
-                      icon: Icons.delete_forever,
-                      isDestructive: true,
-                    ),
-                    _DebugButton(
-                      label: 'New Sync',
-                      onPressed: () async => await DebugHelper.testImprovedSync(),
-                      icon: Icons.cloud_sync,
-                    ),
-                    _DebugButton(
-                      label: 'Compare',
-                      onPressed: () async => await DebugHelper.compareSyncMethods(),
-                      icon: Icons.compare_arrows,
-                    ),
-                  ];
-                  
-                  // Create responsive grid
-                  return Column(
-                    children: [
-                      for (int i = 0; i < debugButtons.length; i += buttonsPerRow)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            bottom: i + buttonsPerRow < debugButtons.length 
-                              ? ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)
-                              : 0,
-                          ),
-                          child: Row(
-          children: [
-                              for (int j = 0; j < buttonsPerRow && i + j < debugButtons.length; j++)
-                                Expanded(
-                                  child: Padding(
-                                    padding: EdgeInsets.only(
-                                      right: j < buttonsPerRow - 1 && i + j + 1 < debugButtons.length
-                                        ? ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 6, desktop: 8)
-                                        : 0,
-                                    ),
-                                    child: debugButtons[i + j],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  );
-                },
-        ),
-            ],
-          ),
-        ),
-      ),
     ];
   }
 
@@ -650,16 +455,17 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
         currentScreenIndex: widget.currentIndex,
       ),
       appBar: AppBar(
-        title: Text(
-          'Dashboard',
-          style: TextStyle(
-            fontSize: 20 * ResponsiveUtils.getFontScale(context),
-          ),
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
         ),
         actions: [
           IconButton(
             icon: Icon(
-              Icons.notifications,
+              Icons.notifications_outlined,
               size: ResponsiveUtils.getIconSize(context),
             ),
             onPressed: () {
@@ -668,34 +474,46 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
           ),
         ],
       ),
-      body: isLoading 
-        ? const Center(child: CircularProgressIndicator())
-        : RefreshIndicator(
-            onRefresh: () async {
-              final coordinator = SyncCoordinator();
-              coordinator.requestSync(() => ImprovedSyncService().performSync());
-              await _automaticTracker.refreshTodayData();
-              // Refresh top offenders list (queries UsageStats directly - always fresh)
-              _topOffendersKey.currentState?.refresh();
-              if (mounted) setState(() {});
-            },
-            child: Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: ResponsiveUtils.getMaxContentWidth(context),
-              ),
-              child: ListView.separated(
-                  physics: const ClampingScrollPhysics(),
-                padding: ResponsiveUtils.getScreenPadding(context),
-                itemCount: _getDashboardWidgets().length,
-                separatorBuilder: (context, index) => SizedBox(
-                  height: ResponsiveUtils.getSpacing(context),
-                ),
-                itemBuilder: (context, index) => _getDashboardWidgets()[index],
-                ),
-              ),
+      body: Stack(
+        children: [
+          // Background image
+          Positioned.fill(
+            child: Image.asset(
+              'assets/Images/app/bg.png',
+              fit: BoxFit.cover,
             ),
           ),
+          // Content
+          isLoading 
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
+                onRefresh: () async {
+                  final coordinator = SyncCoordinator();
+                  coordinator.requestSync(() => ImprovedSyncService().performSync());
+                  await _automaticTracker.refreshTodayData();
+                  // Refresh top offenders list (queries UsageStats directly - always fresh)
+                  _topOffendersKey.currentState?.refresh();
+                  if (mounted) setState(() {});
+                },
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: ResponsiveUtils.getMaxContentWidth(context),
+                    ),
+                    child: ListView.separated(
+                      physics: const ClampingScrollPhysics(),
+                      padding: ResponsiveUtils.getScreenPadding(context),
+                      itemCount: _getDashboardWidgets().length,
+                      separatorBuilder: (context, index) => SizedBox(
+                        height: ResponsiveUtils.getSpacing(context),
+                      ),
+                      itemBuilder: (context, index) => _getDashboardWidgets()[index],
+                    ),
+                  ),
+                ),
+              ),
+        ],
+      ),
     );
   }
 }
@@ -1036,9 +854,9 @@ class _XPProgressCardState extends State<XPProgressCard> {
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
             LinearProgressIndicator(
               value: currentProgress.clamp(0.0, 1.0),
-              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.primary,
+              backgroundColor: Colors.grey[300],
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Color(0xFFa92d35),
               ),
               minHeight: context.isMobile ? 6 : 8,
             ),
@@ -1267,7 +1085,7 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
 
   Widget _buildAppIcon(BuildContext context, String packageName) {
     final iconBase64 = _appIcons[packageName];
-    final iconSize = ResponsiveUtils.getIconSize(context, mobile: 36, tablet: 40, desktop: 44);
+    const double iconSize = 40;
     
     if (iconBase64 != null && iconBase64.isNotEmpty) {
       try {
@@ -1276,10 +1094,10 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
           width: iconSize,
           height: iconSize,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             child: Image.memory(
               bytes,
               width: iconSize,
@@ -1305,13 +1123,13 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
-        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Icon(
         Icons.apps,
         size: size * 0.55,
-        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
       ),
     );
   }
@@ -1320,47 +1138,45 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
   Widget build(BuildContext context) {
     final fontScale = ResponsiveUtils.getFontScale(context);
 
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.1),
-          width: 1,
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Padding(
-        padding: EdgeInsets.all(ResponsiveUtils.getSpacing(context, mobile: 16, tablet: 20, desktop: 24)),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Text(
-                  'Top Apps',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  'Main Offenders',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
-                    fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 20) * fontScale,
-                    letterSpacing: -0.5,
+                    fontSize: 18,
                   ),
                 ),
                 const Spacer(),
                 if (!_hasPermission)
-                  IconButton(
-                    icon: Icon(
+                  GestureDetector(
+                    onTap: () => _showPermissionInfo(context),
+                    child: Icon(
                       Icons.info_outline,
                       size: 20,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
                     ),
-                    onPressed: () => _showPermissionInfo(context),
-                    tooltip: 'Enable app usage tracking',
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
                   ),
               ],
             ),
-            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 20, tablet: 24, desktop: 28)),
+            const SizedBox(height: 20),
             
             if (_isLoading)
               Center(
@@ -1489,66 +1305,41 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
   }
 
   Widget _buildAppList(BuildContext context, double fontScale) {
+    // Limit to 5 apps for cleaner look
+    final appsToShow = _topApps.take(5).toList();
+    
     return Column(
-      children: _topApps.asMap().entries.map((entry) {
-        final index = entry.key;
+      children: appsToShow.asMap().entries.map((entry) {
         final app = entry.value;
-        final rank = index + 1;
-        final isTopThree = rank <= 3;
+        final isLast = entry.key == appsToShow.length - 1;
         
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16),
-          ),
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 18),
           child: Row(
             children: [
-              // Minimal rank indicator
-              SizedBox(
-                width: 24,
+              // App icon (larger)
+              _buildAppIcon(context, app.packageName),
+              const SizedBox(width: 14),
+              
+              // App name
+              Expanded(
                 child: Text(
-                  '$rank',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontWeight: isTopThree ? FontWeight.w600 : FontWeight.w500,
-                    fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
-                    color: isTopThree 
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
-                    letterSpacing: -0.5,
+                  app.appName ?? app.packageName,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 15,
                   ),
-                  textAlign: TextAlign.left,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
               
-              // App icon
-              _buildAppIcon(context, app.packageName),
-              SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
-              
-              // App name and usage
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      app.appName ?? app.packageName,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        fontSize: (Theme.of(context).textTheme.bodyMedium?.fontSize ?? 14) * fontScale,
-                        letterSpacing: -0.2,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      _formatDuration(app.usageMinutes),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
-                        fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
+              // Usage time on right
+              Text(
+                _formatDuration(app.usageMinutes),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                  fontSize: 14,
                 ),
               ),
             ],
@@ -1597,6 +1388,942 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
     );
   }
 }
+
+// ============ NEW DASHBOARD WIDGETS ============
+
+/// Greeting widget displaying "Hello, [Name]" with subtitle
+class _GreetingWidget extends StatelessWidget {
+  final UserProfile? userProfile;
+  
+  const _GreetingWidget({this.userProfile});
+
+  String _getFirstName() {
+    final fullName = userProfile?.fullName ?? 'Student';
+    // Get first name (first word before space)
+    final firstName = fullName.split(' ').first;
+    return firstName;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Hello, ${_getFirstName()}',
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              fontSize: 26,
+              letterSpacing: -0.5,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Track your digital wellness journey',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withOpacity(0.85),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Usage graph widget showing screen time over hours
+class _UsageGraphWidget extends StatefulWidget {
+  const _UsageGraphWidget();
+
+  @override
+  State<_UsageGraphWidget> createState() => _UsageGraphWidgetState();
+}
+
+class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
+  late AutomaticScreenTracker _tracker;
+  List<double> _weeklyData = List.filled(7, 0.0); // 7 days of data
+  int? _selectedDay;
+  Offset? _touchPosition;
+  
+  static const List<String> _dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    _loadWeeklyData();
+  }
+
+  @override
+  void dispose() {
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) {
+      _loadWeeklyData();
+      setState(() {});
+    }
+  }
+  
+  Future<void> _loadWeeklyData() async {
+    try {
+      final weeklyUsage = await _tracker.getWeeklyUsage();
+      if (mounted) {
+        setState(() {
+          _weeklyData = weeklyUsage;
+        });
+      }
+    } catch (e) {
+      // Use sample data if loading fails
+    }
+  }
+  
+  String _formatDuration(int minutes) {
+    if (minutes < 60) {
+      return '${minutes}m';
+    }
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    return mins > 0 ? '${hours}h ${mins}m' : '${hours}h';
+  }
+  
+  int _getTodayIndex() {
+    return DateTime.now().weekday % 7; // Sunday = 0
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const accentColor = Color(0xFFa92d35);
+    
+    // Get max usage for scaling
+    final maxUsage = _weeklyData.reduce((a, b) => a > b ? a : b);
+    final normalizedData = maxUsage > 0 
+        ? _weeklyData.map((v) => v / maxUsage).toList()
+        : List.filled(7, 0.0);
+    
+    final todayIndex = _getTodayIndex();
+    
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 15,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(17),
+        child: GestureDetector(
+          onTapDown: (details) {
+            final RenderBox box = context.findRenderObject() as RenderBox;
+            final localPosition = details.localPosition;
+            final day = ((localPosition.dx / box.size.width) * 7).floor().clamp(0, 6);
+            setState(() {
+              _selectedDay = day;
+              _touchPosition = localPosition;
+            });
+          },
+          onPanUpdate: (details) {
+            final RenderBox box = context.findRenderObject() as RenderBox;
+            final localPosition = details.localPosition;
+            final day = ((localPosition.dx / box.size.width) * 7).floor().clamp(0, 6);
+            setState(() {
+              _selectedDay = day;
+              _touchPosition = localPosition;
+            });
+          },
+          onTapUp: (_) {
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) setState(() => _selectedDay = null);
+            });
+          },
+          onPanEnd: (_) {
+            Future.delayed(const Duration(seconds: 2), () {
+              if (mounted) setState(() => _selectedDay = null);
+            });
+          },
+          child: Stack(
+            children: [
+              // Graph
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _UsageGraphPainter(
+                    context: context,
+                    accentColor: accentColor,
+                    weeklyData: normalizedData,
+                    selectedDay: _selectedDay,
+                    todayIndex: todayIndex,
+                  ),
+                ),
+              ),
+              // Tooltip
+              if (_selectedDay != null && _touchPosition != null)
+                Positioned(
+                  left: _touchPosition!.dx.clamp(40, MediaQuery.of(context).size.width - 120),
+                  top: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: accentColor,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _dayLabels[_selectedDay!],
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Text(
+                          _formatDuration(_weeklyData[_selectedDay!].toInt()),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              // Day labels at bottom
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 12,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: _dayLabels.asMap().entries.map((entry) {
+                    final isToday = entry.key == todayIndex;
+                    return Text(
+                      entry.value,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
+                        color: isToday 
+                            ? accentColor 
+                            : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UsageGraphPainter extends CustomPainter {
+  final BuildContext context;
+  final Color accentColor;
+  final List<double> weeklyData;
+  final int? selectedDay;
+  final int todayIndex;
+
+  _UsageGraphPainter({
+    required this.context, 
+    required this.accentColor,
+    required this.weeklyData,
+    this.selectedDay,
+    required this.todayIndex,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Leave space at bottom for labels
+    final graphHeight = size.height - 35;
+    final topPadding = 20.0;
+    
+    // Gradient fill paint
+    final fillPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          accentColor.withOpacity(0.4),
+          accentColor.withOpacity(0.1),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, graphHeight));
+
+    final linePaint = Paint()
+      ..color = accentColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Use weekly data (7 points for each day)
+    // Invert values so higher usage = higher on graph (closer to top)
+    final points = <Offset>[];
+    for (var i = 0; i < weeklyData.length; i++) {
+      final x = (i / (weeklyData.length - 1)) * size.width;
+      // Invert: high value = low y (top of graph)
+      final normalizedValue = weeklyData[i].clamp(0.0, 1.0);
+      final y = topPadding + (graphHeight - topPadding) * (1.0 - normalizedValue);
+      points.add(Offset(x, y));
+    }
+
+    if (points.isEmpty) return;
+
+    // Create smooth curve using cubic bezier for smoother transitions
+    final linePath = Path();
+    linePath.moveTo(points.first.dx, points.first.dy);
+    
+    for (var i = 0; i < points.length - 1; i++) {
+      final current = points[i];
+      final next = points[i + 1];
+      final controlPoint1 = Offset(
+        current.dx + (next.dx - current.dx) / 3,
+        current.dy,
+      );
+      final controlPoint2 = Offset(
+        current.dx + 2 * (next.dx - current.dx) / 3,
+        next.dy,
+      );
+      linePath.cubicTo(
+        controlPoint1.dx, controlPoint1.dy,
+        controlPoint2.dx, controlPoint2.dy,
+        next.dx, next.dy,
+      );
+    }
+
+    // Create filled area path
+    final fillPath = Path.from(linePath);
+    fillPath.lineTo(size.width, graphHeight);
+    fillPath.lineTo(0, graphHeight);
+    fillPath.close();
+    
+    canvas.drawPath(fillPath, fillPaint);
+    canvas.drawPath(linePath, linePaint);
+
+    // Draw selection indicator line and dot
+    if (selectedDay != null && selectedDay! < points.length) {
+      final selectedPoint = points[selectedDay!];
+      
+      // Vertical indicator line
+      final linePaintIndicator = Paint()
+        ..color = accentColor.withOpacity(0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1;
+      canvas.drawLine(
+        Offset(selectedPoint.dx, topPadding),
+        Offset(selectedPoint.dx, graphHeight),
+        linePaintIndicator,
+      );
+      
+      // Selected point dot
+      final dotOuterPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+      final dotPaint = Paint()
+        ..color = accentColor
+        ..style = PaintingStyle.fill;
+      
+      canvas.drawCircle(selectedPoint, 10, dotOuterPaint);
+      canvas.drawCircle(selectedPoint, 6, dotPaint);
+    }
+
+    // Draw today indicator dot
+    if (todayIndex < points.length && selectedDay == null) {
+      final todayPoint = points[todayIndex];
+      final dotPaint = Paint()
+        ..color = accentColor
+        ..style = PaintingStyle.fill;
+      final dotOuterPaint = Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.fill;
+      
+      canvas.drawCircle(todayPoint, 8, dotOuterPaint);
+      canvas.drawCircle(todayPoint, 5, dotPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _UsageGraphPainter oldDelegate) {
+    return oldDelegate.weeklyData != weeklyData || 
+           oldDelegate.selectedDay != selectedDay ||
+           oldDelegate.todayIndex != todayIndex;
+  }
+}
+
+/// Level display widget with large level number and XP progress bar
+class _LevelDisplayWidget extends StatefulWidget {
+  final UserProfile? userProfile;
+  
+  const _LevelDisplayWidget({this.userProfile});
+
+  @override
+  State<_LevelDisplayWidget> createState() => _LevelDisplayWidgetState();
+}
+
+class _LevelDisplayWidgetState extends State<_LevelDisplayWidget> {
+  int? totalXP;
+  int? level;
+  double? progress;
+  Map<String, int>? levelProgress;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateXPData();
+  }
+
+  @override
+  void didUpdateWidget(_LevelDisplayWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userProfile != widget.userProfile) {
+      _updateXPData();
+    }
+  }
+
+  Future<void> _updateXPData() async {
+    if (widget.userProfile == null) return;
+    
+    try {
+      final totalXPWithPending = await widget.userProfile!.getTotalXPWithPending();
+      final levelWithPending = await widget.userProfile!.getLevelWithPending();
+      final progressWithPending = await widget.userProfile!.getProgressToNextLevelWithPending();
+      final levelProgressWithPending = LevelCalculator.getCurrentLevelProgress(totalXPWithPending);
+      
+      if (mounted) {
+        setState(() {
+          totalXP = totalXPWithPending;
+          level = levelWithPending;
+          progress = progressWithPending;
+          levelProgress = levelProgressWithPending;
+        });
+      }
+    } catch (e) {
+      print('Error updating XP data: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentLevel = level ?? widget.userProfile?.level ?? 1;
+    final currentProgress = progress ?? widget.userProfile?.progressToNextLevel ?? 0.0;
+    final currentLevelProgress = levelProgress ?? widget.userProfile?.currentLevelProgress ?? {'currentLevelXP': 0, 'requiredForNextLevel': 100, 'remaining': 100};
+    final xpInCurrentLevel = currentLevelProgress['currentLevelXP']!;
+    final xpNeededForNextLevel = currentLevelProgress['requiredForNextLevel']!;
+    const accentColor = Color(0xFFa92d35);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 15,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Level label with info icon
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Level',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => _showXPInfo(context),
+                child: Icon(
+                  Icons.info_outline,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.35),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 4),
+          
+          // Large level number - centered
+          Center(
+            child: Text(
+              '$currentLevel',
+              style: Theme.of(context).textTheme.displayLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                fontSize: 80,
+                height: 1.1,
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Progress bar with rounded ends
+          Container(
+            height: 8,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: currentProgress.clamp(0.0, 1.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: accentColor,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 10),
+          
+          // XP text centered
+          Center(
+            child: Text(
+              'Exp $xpInCurrentLevel / $xpNeededForNextLevel',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showXPInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('XP System'),
+        content: const Text(
+          'Earn XP daily based on your screen time:\n\n'
+          '• ≤2 hours: 100 XP\n'
+          '• 2-4 hours: 75 XP\n'
+          '• 4-6 hours: 50 XP\n'
+          '• 6-8 hours: 25 XP\n'
+          '• 8-10 hours: 10 XP\n'
+          '• 10+ hours: 0 XP\n\n'
+          'Less screen time = More XP!',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Combined row widget with Level and Screen Time side by side
+class _LevelAndScreenTimeRow extends StatefulWidget {
+  final UserProfile? userProfile;
+  
+  const _LevelAndScreenTimeRow({this.userProfile});
+
+  @override
+  State<_LevelAndScreenTimeRow> createState() => _LevelAndScreenTimeRowState();
+}
+
+class _LevelAndScreenTimeRowState extends State<_LevelAndScreenTimeRow> {
+  late AutomaticScreenTracker _tracker;
+  int? totalXP;
+  int? level;
+  double? progress;
+  Map<String, int>? levelProgress;
+
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    _updateXPData();
+  }
+
+  @override
+  void dispose() {
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(_LevelAndScreenTimeRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userProfile != widget.userProfile) {
+      _updateXPData();
+    }
+  }
+
+  Future<void> _updateXPData() async {
+    if (widget.userProfile == null) return;
+    
+    try {
+      final totalXPWithPending = await widget.userProfile!.getTotalXPWithPending();
+      final levelWithPending = await widget.userProfile!.getLevelWithPending();
+      final progressWithPending = await widget.userProfile!.getProgressToNextLevelWithPending();
+      final levelProgressWithPending = LevelCalculator.getCurrentLevelProgress(totalXPWithPending);
+      
+      if (mounted) {
+        setState(() {
+          totalXP = totalXPWithPending;
+          level = levelWithPending;
+          progress = progressWithPending;
+          levelProgress = levelProgressWithPending;
+        });
+      }
+    } catch (e) {
+      print('Error updating XP data: $e');
+    }
+  }
+
+  void _showXPInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('XP System'),
+        content: const Text(
+          'Earn XP daily based on your screen time:\n\n'
+          '• ≤2 hours: 100 XP\n'
+          '• 2-4 hours: 75 XP\n'
+          '• 4-6 hours: 50 XP\n'
+          '• 6-8 hours: 25 XP\n'
+          '• 8-10 hours: 10 XP\n'
+          '• 10+ hours: 0 XP\n\n'
+          'Less screen time = More XP!',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentLevel = level ?? widget.userProfile?.level ?? 1;
+    final currentProgress = progress ?? widget.userProfile?.progressToNextLevel ?? 0.0;
+    final currentLevelProgress = levelProgress ?? widget.userProfile?.currentLevelProgress ?? {'currentLevelXP': 0, 'requiredForNextLevel': 100, 'remaining': 100};
+    final xpInCurrentLevel = currentLevelProgress['currentLevelXP']!;
+    final xpNeededForNextLevel = currentLevelProgress['requiredForNextLevel']!;
+    const accentColor = Color(0xFFa92d35);
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Level Card - half width
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 15,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Level label with info icon
+                Row(
+                  children: [
+                    Text(
+                      'Level',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                        fontSize: 13,
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => _showXPInfo(context),
+                      child: Icon(
+                        Icons.info_outline,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.35),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Large level number
+                Center(
+                  child: Text(
+                    '$currentLevel',
+                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 48,
+                      height: 1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Progress bar
+                Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFfec443),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: currentProgress.clamp(0.0, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: accentColor,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                // XP text
+                Center(
+                  child: Text(
+                    '$xpInCurrentLevel / $xpNeededForNextLevel XP',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        const SizedBox(width: 12),
+        
+        // Screen Time Card - half width
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 15,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Screen Time',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Large screen time
+                Center(
+                  child: Text(
+                    _tracker.todayScreenTime,
+                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 32,
+                      height: 1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Today label
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'Today',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: accentColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Stats row widget showing Screen Time and Pickups side by side (DEPRECATED - kept for reference)
+class _StatsRowWidget extends StatefulWidget {
+  const _StatsRowWidget();
+
+  @override
+  State<_StatsRowWidget> createState() => _StatsRowWidgetState();
+}
+
+class _StatsRowWidgetState extends State<_StatsRowWidget> {
+  late AutomaticScreenTracker _tracker;
+  int _pickups = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    _loadPickups();
+  }
+
+  @override
+  void dispose() {
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadPickups() async {
+    // Pickups would come from native platform channel
+    // For now, showing placeholder
+    if (mounted) {
+      setState(() {
+        _pickups = 0; // Placeholder - implement native pickup tracking
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 15,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Screen Time stat
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  'Screen Time',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _tracker.todayScreenTime,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 26,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Divider
+          Container(
+            height: 50,
+            width: 1,
+            color: Theme.of(context).colorScheme.outline.withOpacity(0.15),
+          ),
+          
+          // Pickups stat
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  'Pickups',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _pickups > 0 ? '$_pickups' : '--',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 26,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ============ END NEW DASHBOARD WIDGETS ============
 
 class RankingsTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
@@ -1827,12 +2554,15 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TabBar(
               controller: _tabController,
-            tabs: const [
-              Tab(text: 'All'),
-              Tab(text: 'Department'),
-              Tab(text: 'Friends'),
-            ],
+              tabs: const [
+                Tab(text: 'All'),
+                Tab(text: 'Department'),
+                Tab(text: 'Friends'),
+              ],
               indicatorSize: TabBarIndicatorSize.tab,
+              indicatorColor: const Color(0xFFa92d35),
+              labelColor: const Color(0xFFa92d35),
+              unselectedLabelColor: Colors.black54,
               labelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w600),
               unselectedLabelStyle: const TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w500),
             ),
@@ -2069,6 +2799,8 @@ class _PeriodTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const accentColor = Color(0xFFa92d35);
+    
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -2076,9 +2808,13 @@ class _PeriodTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
-              ? Theme.of(context).colorScheme.surfaceVariant
+              ? accentColor.withOpacity(0.15)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
+          border: isSelected ? null : Border.all(
+            color: Colors.black26,
+            width: 1,
+          ),
         ),
         child: Text(
           label,
@@ -2086,8 +2822,8 @@ class _PeriodTab extends StatelessWidget {
             fontSize: 14,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
             color: isSelected
-                ? Theme.of(context).colorScheme.onSurfaceVariant
-                : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                ? accentColor
+                : Colors.black87,
           ),
         ),
       ),
@@ -2434,7 +3170,7 @@ class _Top3Podium extends StatelessWidget {
                 fontWeight: FontWeight.bold,
                 fontSize: isCenter ? 16 : 14,
                 color: isYou 
-                    ? Theme.of(context).colorScheme.primary
+                    ? const Color(0xFFa92d35)
                     : Theme.of(context).colorScheme.onSurface,
               ),
               textAlign: TextAlign.center,
@@ -2466,7 +3202,7 @@ class _Top3Podium extends StatelessWidget {
               style: TextStyle(
                 fontSize: isCenter ? 14 : 12,
                 fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.primary,
+                color: const Color(0xFFa92d35),
               ),
               textAlign: TextAlign.center,
             ),
@@ -2627,18 +3363,12 @@ class _RankingTile extends StatelessWidget {
                       Expanded(
                         child: Text(
                           name,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: you ? const Color(0xFFa92d35) : null,
+                          ),
                         ),
                       ),
-                      if (you)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Text('You', style: TextStyle(fontSize: 12)),
-                        ),
                     ]),
                     const SizedBox(height: 2),
                     Text(
@@ -3114,86 +3844,145 @@ class _ChallengesTabState extends State<ChallengesTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header section
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.emoji_events,
-                      size: 64,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Complete Challenges',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Earn badges, profile borders, and cover photo borders by completing daily and weekly challenges.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey[600],
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+            // Daily Challenges Section
+            Row(
+              children: [
+                Icon(
+                  Icons.today,
+                  color: const Color(0xFFa92d35),
+                  size: 24,
                 ),
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  'Daily Challenges',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFa92d35).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Resets in 15h',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFa92d35),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: 12),
+            _buildChallengeCard(
+              context,
+              icon: Icons.phone_android,
+              title: 'Screen Time Goal',
+              description: 'Keep screen time under 3 hours today',
+              progress: 0.65,
+              reward: '+20 XP',
+              isCompleted: false,
+            ),
+            const SizedBox(height: 8),
+            _buildChallengeCard(
+              context,
+              icon: Icons.access_time,
+              title: 'Early Bird',
+              description: 'No phone usage before 8 AM',
+              progress: 1.0,
+              reward: '+15 XP',
+              isCompleted: true,
+            ),
+            const SizedBox(height: 8),
+            _buildChallengeCard(
+              context,
+              icon: Icons.app_blocking,
+              title: 'App Break',
+              description: 'Take a 30-min break from social media',
+              progress: 0.0,
+              reward: '+10 XP',
+              isCompleted: false,
+            ),
+            
             const SizedBox(height: 24),
             
-            // Coming soon section
+            // Weekly Challenges Section
+            Row(
+              children: [
+                Icon(
+                  Icons.date_range,
+                  color: const Color(0xFFa92d35),
+                  size: 24,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Weekly Challenges',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFa92d35).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '4 days left',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFa92d35),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildChallengeCard(
+              context,
+              icon: Icons.trending_down,
+              title: 'Weekly Reduction',
+              description: 'Reduce total screen time by 10% this week',
+              progress: 0.42,
+              reward: '+50 XP',
+              isCompleted: false,
+            ),
+            const SizedBox(height: 8),
+            _buildChallengeCard(
+              context,
+              icon: Icons.star,
+              title: 'Consistency King',
+              description: 'Complete all daily challenges for 5 days',
+              progress: 0.6,
+              reward: '+75 XP',
+              isCompleted: false,
+              progressText: '3/5 days',
+            ),
+            const SizedBox(height: 8),
+            _buildChallengeCard(
+              context,
+              icon: Icons.leaderboard,
+              title: 'Rank Climber',
+              description: 'Move up 5 positions in the rankings',
+              progress: 0.8,
+              reward: '+40 XP',
+              isCompleted: false,
+              progressText: '4/5 positions',
+            ),
+            
+            const SizedBox(height: 24),
+            
+            // Coming Soon Section
             Text(
               'Coming Soon',
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.workspace_premium,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Badge Challenges',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Unlock special badges by completing challenges',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -3201,8 +3990,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.border_color,
-                      color: Theme.of(context).colorScheme.primary,
+                      Icons.workspace_premium,
+                      color: const Color(0xFFa92d35),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -3210,14 +3999,14 @@ class _ChallengesTabState extends State<ChallengesTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Profile Border Challenges',
+                            'Badge Challenges',
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Earn decorative borders for your profile picture',
+                            'Unlock special badges by completing challenges',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Colors.grey[600],
                             ),
@@ -3229,41 +4018,113 @@ class _ChallengesTabState extends State<ChallengesTab> {
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.image,
-                      color: Theme.of(context).colorScheme.primary,
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildChallengeCard(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String description,
+    required double progress,
+    required String reward,
+    required bool isCompleted,
+    String? progressText,
+  }) {
+    const accentColor = Color(0xFFa92d35);
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: isCompleted 
+                        ? Colors.green.withOpacity(0.1)
+                        : accentColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    isCompleted ? Icons.check_circle : icon,
+                    color: isCompleted ? Colors.green : accentColor,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          decoration: isCompleted ? TextDecoration.lineThrough : null,
+                          color: isCompleted ? Colors.grey : null,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isCompleted 
+                        ? Colors.green.withOpacity(0.1)
+                        : accentColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    isCompleted ? 'Done!' : reward,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: isCompleted ? Colors.green : accentColor,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Cover Photo Border Challenges',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Unlock special borders for your cover photo',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
+                  ),
+                ),
+              ],
+            ),
+            if (!isCompleted) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        backgroundColor: Colors.grey[200],
+                        valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+                        minHeight: 6,
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    progressText ?? '${(progress * 100).toInt()}%',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -3768,35 +4629,14 @@ class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
                                   ),
                                 ],
                               ),
-                              title: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      name,
-                                      style: TextStyle(
-                                        fontWeight: entry.userId == currentUserId 
-                                            ? FontWeight.bold 
-                                            : FontWeight.normal,
-                                      ),
-                                    ),
-                                  ),
-                                  if (entry.userId == currentUserId)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(context).colorScheme.primaryContainer,
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Text(
-                                        'You',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Theme.of(context).colorScheme.onPrimaryContainer,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                ],
+                              title: Text(
+                                name,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: entry.userId == currentUserId 
+                                      ? const Color(0xFFa92d35) 
+                                      : null,
+                                ),
                               ),
                               subtitle: Text(
                                 entry.departmentName ?? '—',
@@ -3848,12 +4688,21 @@ class _ViewAllRankingsScreenState extends State<ViewAllRankingsScreen> {
     required bool selected,
     required ValueChanged<bool> onSelected,
   }) {
+    const accentColor = Color(0xFFa92d35);
     return FilterChip(
-      label: Text(label),
+      label: Text(
+        label,
+        style: TextStyle(
+          color: selected ? accentColor : Colors.black87,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+        ),
+      ),
       selected: selected,
       onSelected: onSelected,
-      selectedColor: Theme.of(context).colorScheme.primaryContainer,
-      checkmarkColor: Theme.of(context).colorScheme.onPrimaryContainer,
+      selectedColor: accentColor.withOpacity(0.15),
+      checkmarkColor: accentColor,
+      side: selected ? null : BorderSide(color: Colors.black26),
+      showCheckmark: true,
     );
   }
 
@@ -3987,7 +4836,7 @@ class _AppDrawerState extends State<_AppDrawer> {
             _buildNavItem(
               context: context,
               icon: Icons.settings,
-              title: 'Account Settings',
+              title: 'Settings',
               index: 200,
               onTap: () {
                 Navigator.of(context).pop();
@@ -4236,16 +5085,16 @@ class _AppDrawerState extends State<_AppDrawer> {
                 // XP Progress Bar
                 Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.star,
                       size: 16,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: Color(0xFFa92d35),
                     ),
                     const SizedBox(width: 6),
                     Text(
                       'Level $currentLevel',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+                        color: const Color(0xFFa92d35),
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -4263,9 +5112,9 @@ class _AppDrawerState extends State<_AppDrawer> {
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
                   value: currentProgress,
-                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.primary,
+                  backgroundColor: const Color(0xFFfec443),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFa92d35),
                   ),
                   minHeight: 6,
                 ),
@@ -4285,27 +5134,28 @@ class _AppDrawerState extends State<_AppDrawer> {
     required VoidCallback onTap,
   }) {
     final isSelected = widget.currentScreenIndex == index;
+    const accentColor = Color(0xFFa92d35);
     
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         color: isSelected 
-          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+          ? accentColor.withOpacity(0.15)
           : Colors.transparent,
       ),
       child: ListTile(
         leading: Icon(
           icon,
           color: isSelected 
-            ? Theme.of(context).colorScheme.primary
+            ? accentColor
             : Theme.of(context).colorScheme.onSurface,
         ),
         title: Text(
           title,
           style: TextStyle(
             color: isSelected 
-              ? Theme.of(context).colorScheme.primary
+              ? accentColor
               : Theme.of(context).colorScheme.onSurface,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
           ),

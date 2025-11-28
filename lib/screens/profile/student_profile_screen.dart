@@ -32,6 +32,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
   bool _isLoading = true;
   bool _isOwnProfile = false;
   bool _isOffline = false;
+  bool _isInfoExpanded = false; // For collapsible Information section
   int _avatarRefreshKey = 0; // Key to force avatar refresh
   int _coverPhotoRefreshKey = 0; // Key to force cover photo refresh
 
@@ -416,8 +417,10 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
   }
 
   Widget _buildFriendButton() {
+    const accentColor = Color(0xFFa92d35);
+    
     if (_isOwnProfile) {
-      return FilledButton.icon(
+      return OutlinedButton.icon(
         onPressed: _isOffline ? null : () async {
           final result = await Navigator.push(
             context,
@@ -446,6 +449,11 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         },
         icon: const Icon(Icons.edit),
         label: const Text('Edit Profile'),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: accentColor,
+          side: const BorderSide(color: accentColor, width: 1.5),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
       );
     }
 
@@ -487,7 +495,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         icon = Icons.person_add;
     }
 
-    // Use different button style for unfriend (outlined) vs other actions (filled)
+    // Use different button style for unfriend (error outlined) vs other actions (accent outlined)
     if (_friendshipStatus == 'friends') {
       return OutlinedButton.icon(
         onPressed: _handleFriendAction,
@@ -495,14 +503,21 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         label: Text(buttonText),
         style: OutlinedButton.styleFrom(
           foregroundColor: Theme.of(context).colorScheme.error,
+          side: BorderSide(color: Theme.of(context).colorScheme.error, width: 1.5),
+          padding: const EdgeInsets.symmetric(vertical: 12),
         ),
       );
     }
 
-    return FilledButton.icon(
+    return OutlinedButton.icon(
       onPressed: _handleFriendAction,
       icon: Icon(icon),
       label: Text(buttonText),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: accentColor,
+        side: const BorderSide(color: accentColor, width: 1.5),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+      ),
     );
   }
 
@@ -583,19 +598,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             // Profile Header
             _buildProfileHeader(departmentName, level),
             
-            const SizedBox(height: 24),
-            
-            // User Information Section (Display Only)
-            if (_profile!.studentId != null || _profile!.gender != null || 
-                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
-              Padding(
-                padding: ResponsiveUtils.getScreenPadding(context),
-                child: _buildUserInfoSection(),
-              ),
-            
-            if (_profile!.studentId != null || _profile!.gender != null || 
-                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
-              const SizedBox(height: 24),
+            const SizedBox(height: 8),
             
             // Offline indicator
             if (_isOffline)
@@ -627,31 +630,54 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                 ),
               ),
             
-            // Action Button
+            // 1. Action Button (full width)
             Padding(
               padding: ResponsiveUtils.getScreenPadding(context),
-              child: _buildFriendButton(),
+              child: SizedBox(
+                width: double.infinity,
+                child: _buildFriendButton(),
+              ),
             ),
             
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
             
-            // XP Progress Bar
-            Padding(
-              padding: ResponsiveUtils.getScreenPadding(context),
-              child: _buildXPProgressCard(),
-            ),
-            
-            const SizedBox(height: 24),
-            
-            // Stats Row
+            // 2. Stats Row (XP, Level, Friends, Badges)
             Padding(
               padding: ResponsiveUtils.getScreenPadding(context),
               child: _buildStatsRow(level),
             ),
             
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
             
-            // Bio Section
+            // 3. XP Progress Bar
+            Padding(
+              padding: ResponsiveUtils.getScreenPadding(context),
+              child: _buildXPProgressCard(),
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // 4. Badges Section
+            Padding(
+              padding: ResponsiveUtils.getScreenPadding(context),
+              child: _buildBadgesSection(),
+            ),
+            
+            const SizedBox(height: 12),
+            
+            // 5. Information Section (Collapsible)
+            if (_profile!.studentId != null || _profile!.gender != null || 
+                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
+              Padding(
+                padding: ResponsiveUtils.getScreenPadding(context),
+                child: _buildUserInfoSection(),
+              ),
+            
+            if (_profile!.studentId != null || _profile!.gender != null || 
+                _profile!.yearLevel != null || _profile!.dateOfBirth != null)
+              const SizedBox(height: 12),
+            
+            // 6. About/Bio Section
             if (_profile!.bio != null && _profile!.bio!.isNotEmpty)
               Padding(
                 padding: ResponsiveUtils.getScreenPadding(context),
@@ -659,14 +685,6 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
               ),
             
             const SizedBox(height: 24),
-            
-            // Badges Section
-            Padding(
-              padding: ResponsiveUtils.getScreenPadding(context),
-              child: _buildBadgesSection(),
-            ),
-            
-            const SizedBox(height: 32),
             ],
           ),
         ),
@@ -935,14 +953,14 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.primaryContainer,
+                              color: const Color(0xFFa92d35),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Text(
                               'Level $level',
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 fontWeight: FontWeight.bold,
-                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                color: Colors.white,
                                 fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                               ),
                             ),
@@ -982,7 +1000,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
               children: [
                 Icon(
                   Icons.star,
-                  color: Theme.of(context).colorScheme.primary,
+                  color: const Color(0xFFa92d35),
                   size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
                 ),
                 SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
@@ -1004,14 +1022,14 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                     vertical: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 5, desktop: 6),
                   ),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
+                    color: const Color(0xFFa92d35),
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Text(
                     'Level $currentLevel',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      color: Colors.white,
                       fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                     ),
                   ),
@@ -1051,9 +1069,9 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
             SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 10, tablet: 12, desktop: 12)),
             LinearProgressIndicator(
               value: currentProgress,
-              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                Theme.of(context).colorScheme.primary,
+              backgroundColor: const Color(0xFFfec443),
+              valueColor: const AlwaysStoppedAnimation<Color>(
+                Color(0xFFa92d35),
               ),
               minHeight: 8,
             ),
@@ -1163,6 +1181,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
         Icon(
           icon,
           size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
+          color: const Color(0xFFa92d35),
         ),
         SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 4, tablet: 4, desktop: 4)),
         Text(
@@ -1201,7 +1220,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
                     children: [
                       Icon(
                         Icons.info_outline,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: const Color(0xFFa92d35),
                         size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
                       ),
                       SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
@@ -1304,96 +1323,126 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
     }
     
     return Card(
-      child: Padding(
-        padding: ResponsiveUtils.getCardPadding(context),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
-                ),
-                SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
-                Flexible(
-                  child: Text(
-                    'Information',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * fontScale,
-                    ),
+      child: Column(
+        children: [
+          // Collapsible header
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isInfoExpanded = !_isInfoExpanded;
+              });
+            },
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: ResponsiveUtils.getCardPadding(context),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    color: const Color(0xFFa92d35),
+                    size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
                   ),
-                ),
-                if (_isOwnProfile) ...[
-                  const Spacer(),
-                  TextButton.icon(
-                    icon: Icon(
-                      Icons.settings,
-                      size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 16 : 18, tablet: 18, desktop: 20),
-                    ),
-                    label: Text(
-                      'Edit',
-                      style: TextStyle(
-                        fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
+                  SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),
+                  Expanded(
+                    child: Text(
+                      'Information',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        fontSize: (Theme.of(context).textTheme.bodyLarge?.fontSize ?? 16) * fontScale,
                       ),
                     ),
-                    onPressed: () {
-                      // Navigate to Account Settings
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const SettingsScreen(),
+                  ),
+                  if (_isOwnProfile && _isInfoExpanded)
+                    TextButton.icon(
+                      icon: Icon(
+                        Icons.settings,
+                        size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 16 : 18, tablet: 18, desktop: 20),
+                      ),
+                      label: Text(
+                        'Edit',
+                        style: TextStyle(
+                          fontSize: (Theme.of(context).textTheme.bodySmall?.fontSize ?? 12) * fontScale,
                         ),
-                      ).then((_) {
-                        // Reload profile when returning from settings
-                        if (mounted) {
-                          _loadProfile();
-                        }
-                      });
-                    },
+                      ),
+                      onPressed: () {
+                        // Navigate to Account Settings
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SettingsScreen(),
+                          ),
+                        ).then((_) {
+                          // Reload profile when returning from settings
+                          if (mounted) {
+                            _loadProfile();
+                          }
+                        });
+                      },
+                    ),
+                  Icon(
+                    _isInfoExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey,
                   ),
                 ],
-              ],
+              ),
             ),
-            SizedBox(height: ResponsiveUtils.getSpacing(context, mobile: 12, tablet: 14, desktop: 16)),
-            if (_profile!.studentId != null && _profile!.studentId!.isNotEmpty)
-              _buildInfoRow(
-                icon: Icons.badge_outlined,
-                label: 'Student ID',
-                value: _profile!.studentId!,
-                fontScale: fontScale,
-                isVerySmall: isVerySmall,
+          ),
+          // Collapsible content
+          AnimatedCrossFade(
+            firstChild: Padding(
+              padding: EdgeInsets.fromLTRB(
+                ResponsiveUtils.getCardPadding(context).left,
+                0,
+                ResponsiveUtils.getCardPadding(context).right,
+                ResponsiveUtils.getCardPadding(context).bottom,
               ),
-            if (_profile!.gender != null && _profile!.gender!.isNotEmpty)
-              _buildInfoRow(
-                icon: Icons.person_outline,
-                label: 'Gender',
-                value: _profile!.gender!,
-                fontScale: fontScale,
-                isVerySmall: isVerySmall,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_profile!.studentId != null && _profile!.studentId!.isNotEmpty)
+                    _buildInfoRow(
+                      icon: Icons.badge_outlined,
+                      label: 'Student ID',
+                      value: _profile!.studentId!,
+                      fontScale: fontScale,
+                      isVerySmall: isVerySmall,
+                    ),
+                  if (_profile!.gender != null && _profile!.gender!.isNotEmpty)
+                    _buildInfoRow(
+                      icon: Icons.person_outline,
+                      label: 'Gender',
+                      value: _profile!.gender!,
+                      fontScale: fontScale,
+                      isVerySmall: isVerySmall,
+                    ),
+                  if (_profile!.yearLevel != null && _profile!.yearLevel!.isNotEmpty)
+                    _buildInfoRow(
+                      icon: Icons.school_outlined,
+                      label: 'Year Level',
+                      value: _profile!.yearLevel!,
+                      fontScale: fontScale,
+                      isVerySmall: isVerySmall,
+                    ),
+                  if (formattedDateOfBirth != null)
+                    _buildInfoRow(
+                      icon: Icons.calendar_today,
+                      label: 'Date of Birth',
+                      value: formattedDateOfBirth,
+                      fontScale: fontScale,
+                      isVerySmall: isVerySmall,
+                    ),
+                ],
               ),
-            if (_profile!.yearLevel != null && _profile!.yearLevel!.isNotEmpty)
-              _buildInfoRow(
-                icon: Icons.school_outlined,
-                label: 'Year Level',
-                value: _profile!.yearLevel!,
-                fontScale: fontScale,
-                isVerySmall: isVerySmall,
-              ),
-            if (formattedDateOfBirth != null)
-              _buildInfoRow(
-                icon: Icons.calendar_today,
-                label: 'Date of Birth',
-                value: formattedDateOfBirth,
-                fontScale: fontScale,
-                isVerySmall: isVerySmall,
-              ),
-          ],
-        ),
+            ),
+            secondChild: const SizedBox.shrink(),
+            crossFadeState: _isInfoExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
       ),
     );
   }
@@ -1413,7 +1462,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           Icon(
             icon,
             size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 18 : 20, tablet: 20, desktop: 22),
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+            color: const Color(0xFFa92d35),
           ),
           SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 10, desktop: 12)),
           Expanded(
@@ -1454,7 +1503,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen> {
           children: [
             Icon(
               Icons.workspace_premium,
-              color: Theme.of(context).colorScheme.primary,
+              color: const Color(0xFFa92d35),
               size: ResponsiveUtils.getIconSize(context, mobile: isVerySmall ? 20 : 24, tablet: 24, desktop: 28),
             ),
             SizedBox(width: ResponsiveUtils.getSpacing(context, mobile: 8, tablet: 8, desktop: 8)),

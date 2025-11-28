@@ -565,6 +565,112 @@ Future<void> _syncCurrentSessionFromBackground() async {
     };
   }
 
+  /// Get hourly usage data for today (24 values, one for each hour)
+  /// Returns list of minutes spent in each hour
+  Future<List<double>> getHourlyUsageForToday() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        return List.filled(24, 0.0);
+      }
+
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+
+      final db = DatabaseService();
+      final todayLogs = await db.getScreenTimeEntriesForDateRange(
+        userId, 
+        startOfDay, 
+        endOfDay
+      );
+
+      // Initialize hourly buckets (24 hours)
+      final hourlyMinutes = List<double>.filled(24, 0.0);
+
+      // Distribute screen time entries to their respective hours
+      for (final log in todayLogs) {
+        final duration = log.durationMinutes ?? 0;
+        if (duration <= 0) continue;
+        
+        final startHour = log.startTime.hour;
+        final endTime = log.startTime.add(Duration(minutes: duration));
+        final endHour = endTime.hour;
+        
+        if (startHour == endHour) {
+          // Session within same hour
+          hourlyMinutes[startHour] += duration.toDouble();
+        } else {
+          // Session spans multiple hours - distribute proportionally
+          // Minutes in start hour
+          final minutesInStartHour = 60 - log.startTime.minute;
+          hourlyMinutes[startHour] += minutesInStartHour;
+          
+          // Full hours in between
+          for (int h = startHour + 1; h < endHour && h < 24; h++) {
+            hourlyMinutes[h] += 60;
+          }
+          
+          // Minutes in end hour
+          if (endHour < 24) {
+            hourlyMinutes[endHour] += endTime.minute;
+          }
+        }
+      }
+
+      // Cap each hour at 60 minutes max
+      for (int i = 0; i < 24; i++) {
+        hourlyMinutes[i] = hourlyMinutes[i].clamp(0.0, 60.0);
+      }
+
+      return hourlyMinutes;
+    } catch (e) {
+      SimplifiedLogger.error('Error getting hourly usage: $e');
+      return List.filled(24, 0.0);
+    }
+  }
+
+  /// Get weekly usage data (7 values, one for each day Sun-Sat)
+  /// Returns list of total minutes for each day of the current week
+  Future<List<double>> getWeeklyUsage() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        return List.filled(7, 0.0);
+      }
+
+      final now = DateTime.now();
+      // Get the start of the week (Sunday)
+      final daysSinceSunday = now.weekday % 7;
+      final startOfWeek = DateTime(now.year, now.month, now.day).subtract(Duration(days: daysSinceSunday));
+      final endOfWeek = startOfWeek.add(const Duration(days: 7));
+
+      final db = DatabaseService();
+      final weekLogs = await db.getScreenTimeEntriesForDateRange(
+        userId, 
+        startOfWeek, 
+        endOfWeek
+      );
+
+      // Initialize daily buckets (7 days: Sun=0, Mon=1, ..., Sat=6)
+      final dailyMinutes = List<double>.filled(7, 0.0);
+
+      // Distribute screen time entries to their respective days
+      for (final log in weekLogs) {
+        final duration = log.durationMinutes ?? 0;
+        if (duration <= 0) continue;
+        
+        final dayIndex = log.startTime.weekday % 7; // Sunday = 0
+        dailyMinutes[dayIndex] += duration.toDouble();
+      }
+
+      return dailyMinutes;
+    } catch (e) {
+      SimplifiedLogger.error('Error getting weekly usage: $e');
+      return List.filled(7, 0.0);
+    }
+  }
+
   @override
   void dispose() {
     stopMonitoring();

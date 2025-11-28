@@ -28,6 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isDeletingAccount = false;
   bool _isEditingAccountInfo = false;
   bool _isSaving = false;
+  bool _isAccountExpanded = true; // Account section expanded by default
   UserProfile? _userProfile;
   
   // Form controllers and state for editing
@@ -353,44 +354,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildUserProfileSection() {
+    const accentColor = Color(0xFFa92d35);
+    
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.person,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
+      child: Column(
+        children: [
+          // Expandable header
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isAccountExpanded = !_isAccountExpanded;
+              });
+            },
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.person,
+                    color: accentColor,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
                       'Account',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
-                ),
-                if (!_isEditingAccountInfo && _userProfile != null)
-                  IconButton(
-                    icon: const Icon(Icons.edit),
-                    onPressed: () {
-                      setState(() {
-                        _isEditingAccountInfo = true;
-                      });
-                    },
-                    tooltip: 'Edit Account Information',
                   ),
-              ],
+                  if (!_isEditingAccountInfo && _userProfile != null)
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      onPressed: () {
+                        setState(() {
+                          _isEditingAccountInfo = true;
+                          _isAccountExpanded = true;
+                        });
+                      },
+                      tooltip: 'Edit Account Information',
+                    ),
+                  Icon(
+                    _isAccountExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            if (_userProfile != null) ...[
+          ),
+          // Collapsible content
+          AnimatedCrossFade(
+            firstChild: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_userProfile != null) ..._buildAccountContent()
+                  else const Text('Unable to load profile information'),
+                ],
+              ),
+            ),
+            secondChild: const SizedBox.shrink(),
+            crossFadeState: _isAccountExpanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildAccountContent() {
+    if (_userProfile == null) return [];
+    
+    return [
               _buildInfoRow('Name', _userProfile!.fullName),
               _buildInfoRow('Email', _userProfile!.email),
               if (_userProfile!.userTag != null)
@@ -527,26 +566,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ] else ...[
-                // Read-only display
-                if (_userProfile!.studentId != null && _userProfile!.studentId!.isNotEmpty)
-                  _buildInfoRow('Student ID', _userProfile!.studentId!),
-                if (_userProfile!.gender != null && _userProfile!.gender!.isNotEmpty)
-                  _buildInfoRow('Gender', _userProfile!.gender!),
-                if (_userProfile!.yearLevel != null && _userProfile!.yearLevel!.isNotEmpty)
-                  _buildInfoRow('Year Level', _userProfile!.yearLevel!),
-                if (_userProfile!.dateOfBirth != null)
-                  _buildInfoRow('Date of Birth', _formatDateOfBirth(_userProfile!.dateOfBirth!)),
-              ],
-            ] else ...[
-              const Text('Unable to load profile information'),
-            ],
+            // Read-only display
+            if (_userProfile!.studentId != null && _userProfile!.studentId!.isNotEmpty)
+              _buildInfoRow('Student ID', _userProfile!.studentId!),
+            if (_userProfile!.gender != null && _userProfile!.gender!.isNotEmpty)
+              _buildInfoRow('Gender', _userProfile!.gender!),
+            if (_userProfile!.yearLevel != null && _userProfile!.yearLevel!.isNotEmpty)
+              _buildInfoRow('Year Level', _userProfile!.yearLevel!),
+            if (_userProfile!.dateOfBirth != null)
+              _buildInfoRow('Date of Birth', _formatDateOfBirth(_userProfile!.dateOfBirth!)),
           ],
-        ),
-      ),
-    );
+    ];
   }
 
   Widget _buildPermissionsSection() {
+    const accentColor = Color(0xFFa92d35);
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -554,7 +589,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Icon(
               Icons.security,
-              color: Theme.of(context).colorScheme.primary,
+              color: accentColor,
             ),
             const SizedBox(width: 8),
             Text(
@@ -572,6 +607,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildAppSettingsSection() {
+    const accentColor = Color(0xFFa92d35);
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -582,7 +619,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Icon(
                   Icons.settings,
-                  color: Theme.of(context).colorScheme.primary,
+                  color: accentColor,
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -660,6 +697,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildDataManagementSection() {
+    const accentColor = Color(0xFFa92d35);
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -670,7 +709,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Icon(
                   Icons.storage,
-                  color: Theme.of(context).colorScheme.primary,
+                  color: accentColor,
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -722,6 +761,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildAppInformationSection() {
+    const accentColor = Color(0xFFa92d35);
+    
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -732,7 +773,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 Icon(
                   Icons.info,
-                  color: Theme.of(context).colorScheme.primary,
+                  color: accentColor,
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -1292,8 +1333,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
+    const accentColor = Color(0xFFa92d35);
+    
     return ListTile(
-      leading: Icon(icon),
+      leading: Icon(icon, color: accentColor),
       title: Text(title),
       subtitle: Text(subtitle),
       trailing: const Icon(Icons.chevron_right),
@@ -1529,16 +1572,16 @@ class _AppDrawer extends StatelessWidget {
                 // XP Progress Bar
                 Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.star,
                       size: 16,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: Color(0xFFa92d35),
                     ),
                     const SizedBox(width: 6),
                     Text(
                       'Level $currentLevel',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+                        color: const Color(0xFFa92d35),
                         fontWeight: FontWeight.w600,
                         fontSize: 12,
                       ),
@@ -1556,9 +1599,9 @@ class _AppDrawer extends StatelessWidget {
                 const SizedBox(height: 6),
                 LinearProgressIndicator(
                   value: currentProgress,
-                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    Theme.of(context).colorScheme.primary,
+                  backgroundColor: const Color(0xFFfec443),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFa92d35),
                   ),
                   minHeight: 6,
                 ),
@@ -1625,27 +1668,28 @@ class _AppDrawer extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     final isSelected = currentScreenIndex == index;
+    const accentColor = Color(0xFFa92d35);
     
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         color: isSelected 
-          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+          ? accentColor.withOpacity(0.15)
           : Colors.transparent,
       ),
       child: ListTile(
         leading: Icon(
           icon,
           color: isSelected 
-            ? Theme.of(context).colorScheme.primary
+            ? accentColor
             : Theme.of(context).colorScheme.onSurface,
         ),
         title: Text(
           title,
           style: TextStyle(
             color: isSelected 
-              ? Theme.of(context).colorScheme.primary
+              ? accentColor
               : Theme.of(context).colorScheme.onSurface,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
           ),

@@ -277,17 +277,17 @@ class _LoginScreenState extends State<LoginScreen> {
                 // App Logo and Title
                 Column(
                   children: [
-                    Icon(
-                      Icons.schedule,
-                      size: ResponsiveUtils.getIconSize(context, mobile: 80, tablet: 100, desktop: 120),
-                      color: Theme.of(context).colorScheme.primary,
+                    Image.asset(
+                      'assets/Images/app/app_icon.png',
+                      width: ResponsiveUtils.getIconSize(context, mobile: 80, tablet: 100, desktop: 120),
+                      height: ResponsiveUtils.getIconSize(context, mobile: 80, tablet: 100, desktop: 120),
                     ),
                     SizedBox(height: ResponsiveUtils.getSpacing(context)),
                     Text(
                       'TRIminder',
                       style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                         fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: const Color(0xFFa92d35),
                         fontSize: (Theme.of(context).textTheme.headlineLarge?.fontSize ?? 32) * ResponsiveUtils.getFontScale(context),
                       ),
                     ),
@@ -368,7 +368,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Text(
-                          'Login',
+                          'LOGIN',
                           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 ),

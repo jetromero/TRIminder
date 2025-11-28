@@ -69,16 +69,16 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // App Logo
-            Icon(
-              Icons.schedule,
-              size: 120,
-              color: Theme.of(context).colorScheme.primary,
+            Image.asset(
+              'assets/Images/app/app_icon.png',
+              width: 120,
+              height: 120,
             ),
             const SizedBox(height: 24),
             
@@ -87,7 +87,7 @@ class _SplashScreenState extends State<SplashScreen> {
               'TRIminder',
               style: Theme.of(context).textTheme.headlineLarge?.copyWith(
                 fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.primary,
+                color: const Color(0xFFa92d35),
               ),
             ),
             const SizedBox(height: 8),

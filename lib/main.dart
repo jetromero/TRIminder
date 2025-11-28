@@ -210,14 +210,82 @@ class _TRIminderAppState extends State<TRIminderApp> {
       title: 'TRIminder',
       theme: ThemeData(
         fontFamily: 'Poppins',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2196F3), // Blue primary color
-          brightness: Brightness.dark,
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFFFFFFFF),       // White
+          onPrimary: Color(0xFFa92d35),     // Red text on white
+          secondary: Color(0xFFaeaeae),     // Gray
+          onSecondary: Color(0xFF000000),   // Black text on gray
+          tertiary: Color(0xFFa92d35),      // Red accent
+          surface: Color(0xFFFFFFFF),       // White surface
+          onSurface: Color(0xFF212121),     // Dark text
+          surfaceContainerHighest: Color(0xFFF5F5F5), // Light gray cards
+          outline: Color(0xFFaeaeae),       // Gray borders
+          error: Color(0xFFa92d35),         // Red for errors
         ),
         useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFFFFFFF),
         appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
+          backgroundColor: Color(0xFFFFFFFF),
+          foregroundColor: Color(0xFFa92d35),
+          iconTheme: IconThemeData(color: Color(0xFFa92d35)),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFa92d35),
+            foregroundColor: Colors.white,
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFFa92d35),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFa92d35),
+            side: const BorderSide(color: Color(0xFFaeaeae)),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: const Color(0xFFF5F5F5),
+          floatingLabelStyle: const TextStyle(color: Color(0xFFa92d35)),
+          labelStyle: const TextStyle(color: Color(0xFFaeaeae)),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFaeaeae)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFaeaeae)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFa92d35), width: 2),
+          ),
+        ),
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Color(0xFFa92d35),
+          selectionColor: Color(0x40a92d35),
+          selectionHandleColor: Color(0xFFa92d35),
+        ),
+        progressIndicatorTheme: const ProgressIndicatorThemeData(
+          color: Color(0xFFa92d35),
+        ),
+        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+          selectedItemColor: Color(0xFFa92d35),
+          unselectedItemColor: Color(0xFFaeaeae),
+          showUnselectedLabels: true,
+        ),
+        navigationDrawerTheme: const NavigationDrawerThemeData(
+          indicatorColor: Color(0x30a92d35),
+        ),
+        cardTheme: CardThemeData(
+          color: const Color(0xFFF5F5F5),
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
       home: const SplashScreen(),

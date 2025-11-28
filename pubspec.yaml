@@ -82,6 +82,9 @@ dependencies:
   
   # For heads-up notifications (screen time reminders)
   flutter_local_notifications: ^17.2.2
+  
+  # For SVG support
+  flutter_svg: ^2.0.10+1
 
 dev_dependencies:
   flutter_test:
@@ -109,6 +112,7 @@ flutter:
   uses-material-design: true
   assets:
     - .env
+    - assets/Images/app/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

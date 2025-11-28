@@ -64,23 +64,8 @@ class AvatarWidget extends StatelessWidget {
   }
 
   Color _getColorFromName(String? name) {
-    if (name == null || name.isEmpty) {
-      return Colors.grey;
-    }
-    final colors = [
-      Colors.blue,
-      Colors.green,
-      Colors.orange,
-      Colors.purple,
-      Colors.red,
-      Colors.teal,
-      Colors.pink,
-      Colors.indigo,
-      Colors.cyan,
-      Colors.amber,
-    ];
-    final index = name.hashCode % colors.length;
-    return colors[index.abs()];
+    // Use a neutral gray color for all avatars without photos
+    return const Color(0xFF9E9E9E); // Material Grey 500
   }
 
   @override
