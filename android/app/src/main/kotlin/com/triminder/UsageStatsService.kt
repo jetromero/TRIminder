@@ -170,15 +170,30 @@ class UsageStatsService(private val context: Context) {
             while (usageEvents.hasNextEvent()) {
                 val event = UsageEvents.Event()
                 if (usageEvents.getNextEvent(event)) {
+                    val isYouTube = event.packageName == "com.google.android.youtube"
+                    
                     // Filter out system apps and our own app
-                    if (!isSystemApp(event.packageName) && 
-                        event.packageName != context.packageName) {
+                    val isSystem = isSystemApp(event.packageName)
+                    val isOwnApp = event.packageName == context.packageName
+                    
+                    if (isYouTube) {
+                        Log.w("UsageStatsService", "📱 YouTube event: type=${event.eventType}, isSystem=$isSystem, isOwnApp=$isOwnApp")
+                    }
+                    
+                    if (!isSystem && !isOwnApp) {
+                        if (isYouTube) {
+                            Log.w("UsageStatsService", "✅ YouTube event: INCLUDED in results")
+                        }
                         events.add(mapOf(
                             "packageName" to event.packageName,
                             "eventType" to event.eventType,
                             "timestamp" to event.timeStamp,
                             "className" to (event.className ?: "")
                         ))
+                    } else {
+                        if (isYouTube) {
+                            Log.w("UsageStatsService", "❌ YouTube event: FILTERED OUT (isSystem=$isSystem, isOwnApp=$isOwnApp)")
+                        }
                     }
                 }
             }
@@ -934,31 +949,106 @@ class UsageStatsService(private val context: Context) {
     /**
      * Check if an app is a system app
      * Uses version-specific flags and fallback to handle package visibility restrictions on Android 11+
+     * 
+     * Only filters out true system apps (like Settings, Phone dialer), not pre-installed user apps
+     * (like YouTube, Gmail) which should be tracked in app usage statistics.
      */
     private fun isSystemApp(packageName: String): Boolean {
+        // Debug logging for YouTube specifically
+        val isYouTube = packageName == "com.google.android.youtube"
+        
         return try {
             // Try with version-specific flags first (more reliable on Android 11+)
             val flags = getVersionSpecificFlags()
             val applicationInfo = packageManager.getApplicationInfo(packageName, flags)
-            (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            
+            val isSystemFlag = (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val isUpdatedSystemApp = (applicationInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            
+            if (isYouTube) {
+                Log.w("UsageStatsService", "🔍 YouTube check: isSystemFlag=$isSystemFlag, isUpdatedSystemApp=$isUpdatedSystemApp")
+            }
+            
+            // If it's an updated system app, treat it as a user app (don't filter)
+            if (isUpdatedSystemApp) {
+                if (isYouTube) {
+                    Log.w("UsageStatsService", "✅ YouTube: Updated system app - NOT filtering (allowing)")
+                }
+                return false
+            }
+            
+            // Check if app is launchable (has MAIN/LAUNCHER intent)
+            // Launchable apps are user-facing and should be tracked
+            val launchableApps = getLaunchableApps()
+            if (launchableApps.containsKey(packageName)) {
+                // App is launchable, so it's a user app - don't filter
+                if (isYouTube) {
+                    Log.w("UsageStatsService", "✅ YouTube: Launchable app - NOT filtering (allowing)")
+                }
+                return false
+            }
+            
+            if (isYouTube) {
+                Log.w("UsageStatsService", "⚠️ YouTube: isSystemFlag=$isSystemFlag, launchable=${launchableApps.containsKey(packageName)}")
+            }
+            
+            // Only filter if it's a true system app (not updated, not launchable)
+            val result = isSystemFlag
+            if (isYouTube) {
+                Log.w("UsageStatsService", "📊 YouTube isSystemApp result: $result")
+            }
+            result
         } catch (e: SecurityException) {
             // Security exception on Android 11+ - use fallback method (same as getAppName/getAppIconBase64)
+            val isYouTube = packageName == "com.google.android.youtube"
+            if (isYouTube) {
+                Log.w("UsageStatsService", "⚠️ YouTube: SecurityException, using fallback method")
+            }
             try {
                 val launchableApps = getLaunchableApps()
                 val resolveInfo = launchableApps[packageName]
                 if (resolveInfo != null && resolveInfo.activityInfo != null) {
                     val applicationInfo = resolveInfo.activityInfo.applicationInfo
-                    (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                    val isSystemFlag = (applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                    val isUpdatedSystemApp = (applicationInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+                    
+                    if (isYouTube) {
+                        Log.w("UsageStatsService", "🔍 YouTube fallback: isSystemFlag=$isSystemFlag, isUpdatedSystemApp=$isUpdatedSystemApp, launchable=${launchableApps.containsKey(packageName)}")
+                    }
+                    
+                    // Don't filter updated system apps or launchable apps
+                    if (isUpdatedSystemApp || launchableApps.containsKey(packageName)) {
+                        if (isYouTube) {
+                            Log.w("UsageStatsService", "✅ YouTube fallback: NOT filtering (allowing)")
+                        }
+                        return false
+                    }
+                    
+                    val result = isSystemFlag
+                    if (isYouTube) {
+                        Log.w("UsageStatsService", "📊 YouTube fallback isSystemApp result: $result")
+                    }
+                    return result
                 } else {
                     // Can't determine - assume not a system app to avoid filtering out user apps
+                    if (isYouTube) {
+                        Log.w("UsageStatsService", "✅ YouTube fallback: Can't determine - NOT filtering (allowing)")
+                    }
                     false
                 }
             } catch (_: Exception) {
                 // If fallback fails, assume not a system app
+                if (isYouTube) {
+                    Log.w("UsageStatsService", "✅ YouTube fallback: Exception - NOT filtering (allowing)")
+                }
                 false
             }
         } catch (e: Exception) {
             // Other exceptions - assume not a system app
+            val isYouTube = packageName == "com.google.android.youtube"
+            if (isYouTube) {
+                Log.w("UsageStatsService", "✅ YouTube: Exception ($e) - NOT filtering (allowing)")
+            }
             false
         }
     }
