@@ -2022,57 +2022,72 @@ class _ScreenTimeCardState extends State<_ScreenTimeCard>
                   ),
                 ],
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Stack(
                 children: [
-                  Text(
-                    'Screen Time',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey[600],
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Animated screen time
-                  Center(
-                    child: AnimatedBuilder(
-                      animation: _slideAnimation,
-                      builder: (context, child) {
-                        return Transform.scale(
-                          scale: 0.5 + (_slideAnimation.value * 0.5),
-                          child: Opacity(
-                            opacity: _slideAnimation.value,
-                            child: Text(
-                              _tracker.todayScreenTime,
-                              style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 36,
-                                height: 1,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Today label
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: accentColor.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
+                  // Tilted icon on the right
+                  Positioned(
+                    right: -10,
+                    bottom: -10,
+                    child: Transform.rotate(
+                      angle: 0.3, // Slight tilt
+                      child: Icon(
+                        Icons.phone_android,
+                        size: 80,
+                        color: accentColor.withOpacity(0.12),
                       ),
-                      child: Text(
-                        'Today',
+                    ),
+                  ),
+                  // Left-aligned content
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Screen Time',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: accentColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          color: Colors.grey[600],
+                          fontSize: 13,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      // Animated screen time - left aligned
+                      AnimatedBuilder(
+                        animation: _slideAnimation,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: 0.5 + (_slideAnimation.value * 0.5),
+                            alignment: Alignment.centerLeft,
+                            child: Opacity(
+                              opacity: _slideAnimation.value,
+                              child: Text(
+                                _tracker.todayScreenTime,
+                                style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 36,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // Today label - left aligned
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: accentColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Today',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: accentColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -2167,58 +2182,73 @@ class _PickupCardState extends State<_PickupCard>
                   ),
                 ],
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Stack(
                 children: [
-                  Text(
-                    'Pickups',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.white70, // White text for accent background
-                      fontSize: 13,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Animated pickup count
-                  Center(
-                    child: AnimatedBuilder(
-                      animation: _slideAnimation,
-                      builder: (context, child) {
-                        return Transform.scale(
-                          scale: 0.5 + (_slideAnimation.value * 0.5),
-                          child: Opacity(
-                            opacity: _slideAnimation.value,
-                            child: Text(
-                              '${_tracker.todayPickupCount}',
-                              style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 36,
-                                height: 1,
-                                color: Colors.white, // White text
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // Today label
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2), // Semi-transparent white
-                        borderRadius: BorderRadius.circular(12),
+                  // Tilted icon on the right
+                  Positioned(
+                    right: -10,
+                    bottom: -10,
+                    child: Transform.rotate(
+                      angle: -0.3, // Slight tilt opposite direction
+                      child: Icon(
+                        Icons.touch_app,
+                        size: 80,
+                        color: Colors.white.withOpacity(0.15),
                       ),
-                      child: Text(
-                        'Today',
+                    ),
+                  ),
+                  // Left-aligned content
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pickups',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.white, // White text
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          color: Colors.white70, // White text for accent background
+                          fontSize: 13,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      // Animated pickup count - left aligned
+                      AnimatedBuilder(
+                        animation: _slideAnimation,
+                        builder: (context, child) {
+                          return Transform.scale(
+                            scale: 0.5 + (_slideAnimation.value * 0.5),
+                            alignment: Alignment.centerLeft,
+                            child: Opacity(
+                              opacity: _slideAnimation.value,
+                              child: Text(
+                                '${_tracker.todayPickupCount}',
+                                style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 36,
+                                  height: 1,
+                                  color: Colors.white, // White text
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // Today label - left aligned
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2), // Semi-transparent white
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'Today',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.white, // White text
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

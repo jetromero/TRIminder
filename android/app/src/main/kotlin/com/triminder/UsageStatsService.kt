@@ -1112,14 +1112,9 @@ class UsageStatsService(private val context: Context) {
             
             Log.d("UsageStatsService", "Unlock counts - KEYGUARD_HIDDEN: $keyguardHiddenCount, SCREEN_INTERACTIVE: $screenInteractiveCount, DEVICE_STARTUP: $deviceUnlockCount")
             
-            // Prefer KEYGUARD_HIDDEN, fall back to SCREEN_INTERACTIVE
-            val count = when {
-                keyguardHiddenCount > 0 -> keyguardHiddenCount
-                screenInteractiveCount > 0 -> screenInteractiveCount
-                else -> deviceUnlockCount
-            }
-            
-            return count
+            // ONLY use KEYGUARD_HIDDEN (actual device unlock) - don't fall back to SCREEN_INTERACTIVE
+            // SCREEN_INTERACTIVE fires for any screen-on event, not just user unlocks
+            return keyguardHiddenCount
         } catch (e: Exception) {
             Log.e("UsageStatsService", "Error getting unlock count: ${e.message}")
             return 0
