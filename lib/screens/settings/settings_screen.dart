@@ -16,8 +16,9 @@ import '../../services/screen_time_notification_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final ValueChanged<int>? onSelectTab;
+  final GlobalKey<ScaffoldState>? scaffoldKey;
   
-  const SettingsScreen({super.key, this.onSelectTab});
+  const SettingsScreen({super.key, this.onSelectTab, this.scaffoldKey});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -29,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isEditingAccountInfo = false;
   bool _isSaving = false;
   bool _isAccountExpanded = true; // Account section expanded by default
+  bool _isStatusBarHidden = false;
   UserProfile? _userProfile;
   
   // Form controllers and state for editing
@@ -71,9 +73,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   
   @override
   void dispose() {
+    if (_isStatusBarHidden) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     _studentIdController.dispose();
     _dateOfBirthController.dispose();
     super.dispose();
+  }
+
+  void _handleScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return;
+    if (notification is ScrollUpdateNotification) {
+      final currentOffset = notification.metrics.pixels;
+      if (currentOffset >= kToolbarHeight && !_isStatusBarHidden) {
+        _isStatusBarHidden = true;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else if (currentOffset < 1 && _isStatusBarHidden) {
+        _isStatusBarHidden = false;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -291,65 +310,81 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
-      appBar: AppBar(
-        title: Text(
-          'Settings',
-          style: TextStyle(
-            fontSize: 20 * ResponsiveUtils.getFontScale(context),
-          ),
-        ),
-        centerTitle: true,
-      ),
-      drawer: _AppDrawer(
-        onSelectTab: widget.onSelectTab ?? (index) {},
-        currentScreenIndex: 200, // Settings screen index
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: ResponsiveUtils.getMaxContentWidth(context),
-                ),
-                child: ListView(
-                  physics: const ClampingScrollPhysics(),
-                  padding: ResponsiveUtils.getScreenPadding(context),
-                  children: [
-                    const SizedBox(height: 16),
-                    
-                    // User Profile Section
-                    _buildUserProfileSection(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Permissions Section
-                    _buildPermissionsSection(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // App Settings Section
-                    _buildAppSettingsSection(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Data Management Section
-                    _buildDataManagementSection(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // App Information Section
-                    _buildAppInformationSection(),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Sign Out Section
-                    _buildSignOutSection(),
-                    
-                    const SizedBox(height: 32),
-                  ],
+      drawerGestureEnabled: false,
+      extendBodyBehindAppBar: true,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          _handleScroll(notification);
+          return false;
+        },
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverAppBar(
+              elevation: 0,
+              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+              floating: true,
+              snap: true,
+              leading: IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => widget.scaffoldKey?.currentState?.openDrawer(),
+              ),
+              title: Text(
+                'Settings',
+                style: TextStyle(
+                  fontSize: 20 * ResponsiveUtils.getFontScale(context),
                 ),
               ),
+              centerTitle: true,
             ),
+          ],
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: ResponsiveUtils.getMaxContentWidth(context),
+                    ),
+                    child: ListView(
+                      physics: const ClampingScrollPhysics(),
+                      padding: ResponsiveUtils.getScreenPadding(context),
+                      children: [
+                        const SizedBox(height: 16),
+                        
+                        // User Profile Section
+                        _buildUserProfileSection(),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // Permissions Section
+                        _buildPermissionsSection(),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // App Settings Section
+                        _buildAppSettingsSection(),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // Data Management Section
+                        _buildDataManagementSection(),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // App Information Section
+                        _buildAppInformationSection(),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // Sign Out Section
+                        _buildSignOutSection(),
+                        
+                        const SizedBox(height: 32),
+                      ],
+                    ),
+                  ),
+                ),
+        ),
+      ),
     );
   }
 

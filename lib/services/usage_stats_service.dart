@@ -197,6 +197,19 @@ class UsageStatsService {
     _cachedPermissionStatus = null;
     _lastPermissionCheck = null;
   }
+  /// Get device unlock count for today
+  /// Uses native platform channel to get actual unlock count from UsageStatsManager
+  static Future<int> getTodayUnlockCount() async {
+    if (!await isPermissionGranted()) return 0;
+    
+    try {
+      final count = await _channel.invokeMethod<int>('getTodayUnlockCount');
+      return count ?? 0;
+    } catch (e) {
+      print('Error getting unlock count: $e');
+      return 0;
+    }
+  }
 }
 
 /// App usage statistics from UsageStatsManager

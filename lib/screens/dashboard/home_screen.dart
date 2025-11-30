@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../auth/login_screen.dart';
 import '../settings/settings_screen.dart';
@@ -45,18 +46,22 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isNewUser = false;
   bool _showFriends = false;
   bool _showSettings = false;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   List<Widget> get _screens => [
     DashboardTab(
       isNewUser: _isNewUser,
       onSelectTab: _handleSelectTab,
       currentIndex: _currentIndex,
+      scaffoldKey: _scaffoldKey,
     ),
     RankingsTab(
       onSelectTab: _handleSelectTab,
+      scaffoldKey: _scaffoldKey,
     ),
     ChallengesTab(
       onSelectTab: _handleSelectTab,
+      scaffoldKey: _scaffoldKey,
     ),
   ];
 
@@ -133,33 +138,75 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _AppDrawer(
+        onSelectTab: _handleSelectTab,
+        currentScreenIndex: _showFriends ? 100 : (_showSettings ? 200 : _currentIndex),
+      ),
+      drawerEdgeDragWidth: screenWidth,
       body: _showFriends
-          ? FriendsTab(onSelectTab: _handleSelectTab)
+          ? FriendsTab(onSelectTab: _handleSelectTab, scaffoldKey: _scaffoldKey)
           : _showSettings
-              ? SettingsScreen(onSelectTab: _handleSelectTab)
+              ? SettingsScreen(onSelectTab: _handleSelectTab, scaffoldKey: _scaffoldKey)
           : _screens[_currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) {
-          setState(() {
-            _currentIndex = index;
-            _showFriends = false;
-            _showSettings = false;
-          });
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Home',
+      bottomNavigationBar: Stack(
+        children: [
+          // Background layer with pale accent color to fill the corners
+          Positioned.fill(
+            child: Container(
+              color: const Color(0xFFFDE8E9), // Same pale accent as body background
+            ),
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.leaderboard),
-            label: 'Rankings',
+          // Actual bottom nav bar with rounded corners
+          Container(
+            decoration: const BoxDecoration(
+              color: Color(0xFFa92d35), // Accent color
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: BottomNavigationBar(
+              currentIndex: _currentIndex,
+              backgroundColor: Colors.transparent, // Transparent to show container color
+              elevation: 0, // Remove shadow
+            selectedItemColor: Colors.white,
+            unselectedItemColor: Colors.white60,
+            type: BottomNavigationBarType.fixed,
+            onTap: (index) {
+              setState(() {
+                _currentIndex = index;
+                _showFriends = false;
+                _showSettings = false;
+              });
+            },
+            items: const [
+              BottomNavigationBarItem(
+                icon: Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Icon(Icons.home),
+                ),
+                label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Icon(Icons.leaderboard),
+                ),
+                label: 'Rankings',
+              ),
+              BottomNavigationBarItem(
+                icon: Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Icon(Icons.emoji_events),
+                ),
+                label: 'Challenges',
+              ),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.emoji_events),
-            label: 'Challenges',
           ),
         ],
       ),
@@ -171,11 +218,13 @@ class DashboardTab extends StatefulWidget {
   final bool isNewUser;
   final ValueChanged<int> onSelectTab;
   final int currentIndex;
+  final GlobalKey<ScaffoldState>? scaffoldKey;
   const DashboardTab({
     super.key, 
     this.isNewUser = false, 
     required this.onSelectTab,
     this.currentIndex = 0,
+    this.scaffoldKey,
   });
 
   @override
@@ -189,6 +238,8 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
   late AutomaticScreenTracker _automaticTracker;
   Timer? _refreshTimer;
   final GlobalKey<_TopOffendersCardState> _topOffendersKey = GlobalKey<_TopOffendersCardState>();
+  final GlobalKey<_UsageGraphWidgetState> _usageGraphKey = GlobalKey<_UsageGraphWidgetState>();
+  bool _isStatusBarHidden = false;
 
   @override
   void initState() {
@@ -302,10 +353,40 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    // Restore status bar when leaving
+    if (_isStatusBarHidden) {
+      SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+      );
+    }
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
     ImprovedSyncService().clearSyncCompleteCallback();
     super.dispose();
+  }
+
+  void _handleScroll(ScrollNotification notification) {
+    if (notification is ScrollUpdateNotification) {
+      final currentOffset = notification.metrics.pixels;
+      
+      // Hide only status bar when scrolled down (keep bottom nav visible)
+      if (currentOffset >= 50 && !_isStatusBarHidden) {
+        _isStatusBarHidden = true;
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: [SystemUiOverlay.bottom], // Hide status bar only, keep bottom
+        );
+      }
+      // Show status bar when scrolled back to top
+      else if (currentOffset < 10 && _isStatusBarHidden) {
+        _isStatusBarHidden = false;
+        SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom], // Show all
+        );
+      }
+    }
   }
 
   @override
@@ -402,14 +483,26 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   List<Widget> _getDashboardWidgets() {
     return [
-      // Greeting Header
-      _GreetingWidget(userProfile: userProfile),
+      // Combined Greeting + Level Progress Card (includes avatar and notification - acts as AppBar)
+      _GreetingLevelCard(
+        userProfile: userProfile,
+        onAvatarTap: () => widget.scaffoldKey?.currentState?.openDrawer(),
+        onNotificationTap: () {
+          // TODO: Show notifications
+        },
+      ),
       
       // Usage Graph
-      const _UsageGraphWidget(),
+      _UsageGraphWidget(key: _usageGraphKey),
       
-      // Level and Screen Time side by side
-      _LevelAndScreenTimeRow(userProfile: userProfile),
+      // Screen Time and Pickup cards side by side
+      const Row(
+        children: [
+          Expanded(child: _ScreenTimeCard()),
+          SizedBox(width: 12),
+          Expanded(child: _PickupCard()),
+        ],
+      ),
       
       // Main Offenders List (App Usage)
       TopOffendersCard(key: _topOffendersKey),
@@ -418,71 +511,107 @@ class _DashboardTabState extends State<DashboardTab> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
+    // Pale version of accent color as background
+    const bgColor = Color(0xFFFDE8E9); // Pale red/pink based on accent #a92d35
+    
+    // Set status bar style for dark background
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light, // Light icons for dark background
+      statusBarBrightness: Brightness.dark,
+    ));
+    
     return AppScaffold(
-      drawer: _AppDrawer(
-        onSelectTab: widget.onSelectTab,
-        currentScreenIndex: widget.currentIndex,
-      ),
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        systemOverlayStyle: const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.dark,
-          statusBarBrightness: Brightness.light,
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(
-              Icons.notifications_outlined,
-              size: ResponsiveUtils.getIconSize(context),
-            ),
-            onPressed: () {
-              // TODO: Show notifications
+      drawerGestureEnabled: false,
+      extendBodyBehindAppBar: false,
+      backgroundColor: bgColor,
+      body: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              _handleScroll(notification);
+              return false;
             },
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          // Background image
-          Positioned.fill(
-            child: Image.asset(
-              'assets/Images/app/bg.png',
-              fit: BoxFit.cover,
-            ),
-          ),
-          // Content
-          isLoading 
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: () async {
-                  final coordinator = SyncCoordinator();
-                  coordinator.requestSync(() => ImprovedSyncService().performSync());
-                  await _automaticTracker.refreshTodayData();
-                  // Refresh top offenders list (queries UsageStats directly - always fresh)
-                  _topOffendersKey.currentState?.refresh();
-                  if (mounted) setState(() {});
-                },
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: ResponsiveUtils.getMaxContentWidth(context),
-                    ),
-                    child: ListView.separated(
-                      physics: const ClampingScrollPhysics(),
-                      padding: ResponsiveUtils.getScreenPadding(context),
-                      itemCount: _getDashboardWidgets().length,
-                      separatorBuilder: (context, index) => SizedBox(
-                        height: ResponsiveUtils.getSpacing(context),
+            child: NestedScrollView(
+              // Always allow scrolling for pull-to-refresh
+              physics: const AlwaysScrollableScrollPhysics(),
+              headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              // No SliverAppBar - avatar and notification are now part of the XP card
+              // This allows the XP card and its header to scroll together as one unit
+            ],
+            body: RefreshIndicator(
+                  color: const Color(0xFFa92d35), // Accent color
+                  onRefresh: () async {
+                    final coordinator = SyncCoordinator();
+                    coordinator.requestSync(() => ImprovedSyncService().performSync());
+                    await _automaticTracker.refreshTodayData();
+                    // Refresh usage graph
+                    await _usageGraphKey.currentState?.refresh();
+                    // Refresh top offenders list (queries UsageStats directly - always fresh)
+                    _topOffendersKey.currentState?.refresh();
+                    if (mounted) setState(() {});
+                  },
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: ResponsiveUtils.getMaxContentWidth(context),
                       ),
-                      itemBuilder: (context, index) => _getDashboardWidgets()[index],
+                      child: ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.only(
+                          left: 0, // First card goes full width
+                          right: 0,
+                          top: 0, // No gap between AppBar and first card
+                          bottom: 0, // No extra bottom padding - Main Offenders is edge to edge
+                        ),
+                        itemCount: _getDashboardWidgets().length,
+                        separatorBuilder: (context, index) {
+                          // No gap between XP card (index 0) and Graph (index 1)
+                          if (index == 0) return const SizedBox.shrink();
+                          // Even gap of 12 between other cards
+                          return const SizedBox(height: 12);
+                        },
+                        itemBuilder: (context, index) {
+                          final widget = _getDashboardWidgets()[index];
+                          final widgetCount = _getDashboardWidgets().length;
+                          // First item (XP card) goes full width
+                          if (index == 0) {
+                            return widget;
+                          }
+                          // Second item (Graph card) overlaps XP card with negative margin
+                          if (index == 1) {
+                            return Transform.translate(
+                              offset: const Offset(0, -90),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: ResponsiveUtils.getScreenPadding(context).left,
+                                ),
+                                child: widget,
+                              ),
+                            );
+                          }
+                          // Last item (Main Offenders) - edge to edge, no horizontal padding
+                          if (index == widgetCount - 1) {
+                            return Transform.translate(
+                              offset: const Offset(0, -90),
+                              child: widget,
+                            );
+                          }
+                          // Other items (Screen Time / Pickup row) with horizontal padding
+                          return Transform.translate(
+                            offset: const Offset(0, -90),
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: ResponsiveUtils.getScreenPadding(context).left,
+                              ),
+                              child: widget,
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
-              ),
-        ],
-      ),
+            ),
+          ),
     );
   }
 }
@@ -924,17 +1053,74 @@ class TopOffendersCard extends StatefulWidget {
   State<TopOffendersCard> createState() => _TopOffendersCardState();
 }
 
-class _TopOffendersCardState extends State<TopOffendersCard> {
+class _TopOffendersCardState extends State<TopOffendersCard> with TickerProviderStateMixin {
   List<AppUsageEntry> _topApps = [];
   Map<String, String?> _appIcons = {}; // Cache app icons: packageName -> base64
   bool _isLoading = true;
   bool _hasPermission = false;
   bool _hasData = false;
+  
+  // Animation controllers for staggered slide-up effect
+  final List<AnimationController> _itemAnimationControllers = [];
+  final List<Animation<double>> _itemAnimations = [];
+  
+  // Title animation
+  late AnimationController _titleAnimationController;
+  late Animation<double> _titleAnimation;
 
   @override
   void initState() {
     super.initState();
+    _titleAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _titleAnimation = CurvedAnimation(
+      parent: _titleAnimationController,
+      curve: Curves.easeOutCubic,
+    );
     _loadTopApps();
+  }
+  
+  @override
+  void dispose() {
+    _titleAnimationController.dispose();
+    for (final controller in _itemAnimationControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+  
+  void _initializeAnimations(int itemCount) {
+    // Dispose existing controllers
+    for (final controller in _itemAnimationControllers) {
+      controller.dispose();
+    }
+    _itemAnimationControllers.clear();
+    _itemAnimations.clear();
+    
+    // Create new controllers for each item
+    for (int i = 0; i < itemCount; i++) {
+      final controller = AnimationController(
+        duration: const Duration(milliseconds: 500),
+        vsync: this,
+      );
+      final animation = CurvedAnimation(
+        parent: controller,
+        curve: Curves.easeOutCubic,
+      );
+      _itemAnimationControllers.add(controller);
+      _itemAnimations.add(animation);
+    }
+    
+    // Start staggered animations - rank 1 first, then others
+    for (int i = 0; i < itemCount; i++) {
+      Future.delayed(Duration(milliseconds: 80 * i), () {
+        if (mounted && i < _itemAnimationControllers.length) {
+          _itemAnimationControllers[i].forward();
+        }
+      });
+    }
   }
 
   void refresh() {
@@ -1028,6 +1214,11 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
           _hasData = top10Apps.isNotEmpty;
           _isLoading = false;
         });
+        // Start title animation first, then staggered item animations
+        _titleAnimationController.forward();
+        if (top10Apps.isNotEmpty) {
+          _initializeAnimations(top10Apps.length);
+        }
       }
     } catch (e) {
       print('Error loading top apps: $e');
@@ -1106,57 +1297,45 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
   @override
   Widget build(BuildContext context) {
     final fontScale = ResponsiveUtils.getFontScale(context);
-
+    
     return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      // Transparent background, no shadow
+      color: Colors.transparent,
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        // Extra bottom padding to extend to bottom nav bar (compensates for negative transforms)
+        padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Text(
-                  'Main Offenders',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 18,
+            AnimatedBuilder(
+              animation: _titleAnimation,
+              builder: (context, child) {
+                return Transform.translate(
+                  offset: Offset(0, 30 * (1 - _titleAnimation.value)),
+                  child: Opacity(
+                    opacity: _titleAnimation.value.clamp(0.0, 1.0),
+                    child: child,
                   ),
-                ),
-                const Spacer(),
-                if (!_hasPermission)
-                  GestureDetector(
-                    onTap: () => _showPermissionInfo(context),
-                    child: Icon(
-                      Icons.info_outline,
-                      size: 20,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                );
+              },
+              child: Row(
+                children: [
+                  const SizedBox(width: 8), // Extra left padding
+                  Text(
+                    'Today\'s Offenders',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 18,
                     ),
                   ),
-              ],
+                  const Spacer(),
+                ],
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             
             if (_isLoading)
-              Center(
-                child: Padding(
-                  padding: EdgeInsets.all(ResponsiveUtils.getSpacing(context, mobile: 24, tablet: 32, desktop: 40)),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.6),
-                  ),
-                ),
-              )
+              const SizedBox.shrink() // No skeleton, just wait for animated items
             else if (!_hasPermission)
               _buildPermissionPrompt(context, fontScale)
             else if (!_hasData)
@@ -1274,21 +1453,61 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
   }
 
   Widget _buildAppList(BuildContext context, double fontScale) {
-    // Limit to 5 apps for cleaner look
-    final appsToShow = _topApps.take(5).toList();
+    const accentColor = Color(0xFFa92d35);
     
     return Column(
-      children: appsToShow.asMap().entries.map((entry) {
+      children: _topApps.asMap().entries.map((entry) {
+        final index = entry.key;
         final app = entry.value;
-        final isLast = entry.key == appsToShow.length - 1;
+        final isLast = index == _topApps.length - 1;
         
-        return Padding(
-          padding: EdgeInsets.only(bottom: isLast ? 0 : 18),
+        // Format rank with leading zero: 01, 02, ... 09, 10
+        final rankText = (index + 1).toString().padLeft(2, '0');
+        
+        // Get animation for this index (with bounds check)
+        final hasAnimation = index < _itemAnimations.length;
+        
+        // Each app in its own white card with shadow - closer gaps
+        Widget cardContent = Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: Row(
             children: [
-              // App icon (larger)
+              // Ranking number with leading zero
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: index < 3 
+                      ? accentColor.withOpacity(0.15)
+                      : Colors.grey.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  rankText,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: index < 3 ? accentColor : Colors.grey[600],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              
+              // App icon
               _buildAppIcon(context, app.packageName),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               
               // App name
               Expanded(
@@ -1307,12 +1526,34 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
               Text(
                 _formatDuration(app.usageMinutes),
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                  color: Colors.grey[600],
                   fontSize: 14,
                 ),
               ),
             ],
           ),
+        );
+        
+        // Wrap with animation if available
+        if (hasAnimation) {
+          cardContent = AnimatedBuilder(
+            animation: _itemAnimations[index],
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(0, 50 * (1 - _itemAnimations[index].value)), // Slide from bottom
+                child: Opacity(
+                  opacity: _itemAnimations[index].value.clamp(0.0, 1.0),
+                  child: child,
+                ),
+              );
+            },
+            child: cardContent,
+          );
+        }
+        
+        return Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 6),
+          child: cardContent,
         );
       }).toList(),
     );
@@ -1360,62 +1601,652 @@ class _TopOffendersCardState extends State<TopOffendersCard> {
 
 // ============ NEW DASHBOARD WIDGETS ============
 
-/// Greeting widget displaying "Hello, [Name]" with subtitle
-class _GreetingWidget extends StatelessWidget {
+/// Combined Greeting + Level Progress Card
+class _GreetingLevelCard extends StatefulWidget {
   final UserProfile? userProfile;
+  final VoidCallback? onAvatarTap;
+  final VoidCallback? onNotificationTap;
   
-  const _GreetingWidget({this.userProfile});
+  const _GreetingLevelCard({
+    this.userProfile,
+    this.onAvatarTap,
+    this.onNotificationTap,
+  });
+
+  @override
+  State<_GreetingLevelCard> createState() => _GreetingLevelCardState();
+}
+
+class _GreetingLevelCardState extends State<_GreetingLevelCard> 
+    with SingleTickerProviderStateMixin {
+  late AutomaticScreenTracker _tracker;
+  late AnimationController _animationController;
+  late Animation<double> _slideAnimation;
+  late Animation<double> _progressAnimation;
+  int? totalXP;
+  int? level;
+  double? progress;
+  Map<String, int>? levelProgress;
+
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    
+    // Setup dropdown and progress bar animation
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _slideAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    );
+    _progressAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: const Interval(0.3, 1.0, curve: Curves.easeOutCubic),
+      ),
+    );
+    
+    _updateXPData();
+    // Start animation after a brief delay
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) _animationController.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(_GreetingLevelCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userProfile != widget.userProfile) {
+      _updateXPData();
+    }
+  }
+
+  Future<void> _updateXPData() async {
+    if (widget.userProfile == null) return;
+    
+    try {
+      final totalXPWithPending = await widget.userProfile!.getTotalXPWithPending();
+      final levelWithPending = await widget.userProfile!.getLevelWithPending();
+      final progressWithPending = await widget.userProfile!.getProgressToNextLevelWithPending();
+      final levelProgressWithPending = LevelCalculator.getCurrentLevelProgress(totalXPWithPending);
+      
+      if (mounted) {
+        setState(() {
+          totalXP = totalXPWithPending;
+          level = levelWithPending;
+          progress = progressWithPending;
+          levelProgress = levelProgressWithPending;
+        });
+      }
+    } catch (e) {
+      print('Error updating XP data: $e');
+    }
+  }
 
   String _getFirstName() {
-    final fullName = userProfile?.fullName ?? 'Student';
-    // Get first name (first word before space)
-    final firstName = fullName.split(' ').first;
-    return firstName;
+    final fullName = widget.userProfile?.fullName ?? 'Student';
+    return fullName.split(' ').first;
+  }
+
+  int _getProgressPercent() {
+    final p = progress ?? widget.userProfile?.progressToNextLevel ?? 0.0;
+    return (p * 100).round();
+  }
+
+  void _showXPInfo(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('XP System'),
+        content: const Text(
+          'Earn XP daily based on your screen time:\n\n'
+          '• ≤2 hours: 100 XP\n'
+          '• 2-4 hours: 75 XP\n'
+          '• 4-6 hours: 50 XP\n'
+          '• 6-8 hours: 25 XP\n'
+          '• 8-10 hours: 10 XP\n'
+          '• 10+ hours: 0 XP\n\n'
+          'Less screen time = More XP!',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Hello, ${_getFirstName()}',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              fontSize: 26,
-              letterSpacing: -0.5,
-              color: Colors.white,
-            ),
+    final currentLevel = level ?? widget.userProfile?.level ?? 1;
+    final currentProgress = progress ?? widget.userProfile?.progressToNextLevel ?? 0.0;
+    const accentColor = Color(0xFFa92d35);
+
+    // Get status bar height for proper padding
+    final statusBarHeight = MediaQuery.of(context).padding.top;
+    
+    return AnimatedBuilder(
+      animation: _slideAnimation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, (1 - _slideAnimation.value) * -50), // Dropdown animation
+          child: Opacity(
+            opacity: _slideAnimation.value.clamp(0.0, 1.0),
+            child: Container(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: statusBarHeight + 12, // Status bar + padding
+          bottom: 100, // Extended bottom so Graph card overlaps
+        ),
+        decoration: BoxDecoration(
+          color: accentColor, // Accent color background
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(20),
+            bottomRight: Radius.circular(20),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Track your digital wellness journey',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Colors.white.withOpacity(0.85),
-              fontSize: 14,
-            ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFd4777c), // Light accent color shadow
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Row 0: Avatar (left) + Notification (right) - acts as AppBar
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              GestureDetector(
+                onTap: widget.onAvatarTap,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFffc542),
+                      width: 2,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: Colors.white,
+                    backgroundImage: widget.userProfile?.avatarUrl != null
+                        ? NetworkImage(widget.userProfile!.avatarUrl!)
+                        : null,
+                    child: widget.userProfile?.avatarUrl == null
+                        ? Text(
+                            widget.userProfile?.firstName?.substring(0, 1).toUpperCase() ?? 'U',
+                            style: const TextStyle(
+                              color: Color(0xFFa92d35),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.notifications,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                onPressed: widget.onNotificationTap,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Row 1: Hello, Name (left) + LEVEL X (right)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Hello, ${_getFirstName()}',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 40,
+                  color: Colors.white,
+                ),
+              ),
+              Text(
+                'LEVEL $currentLevel',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: Colors.white, // White text
+                ),
+              ),
+            ],
+          ),
+          // Row 2: Your progress + info icon (left) + percentage (right)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Your progress',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.white70, // Semi-transparent white
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => _showXPInfo(context),
+                    child: const Icon(
+                      Icons.info_outline,
+                      size: 14,
+                      color: Colors.white70, // Semi-transparent white
+                    ),
+                  ),
+                ],
+              ),
+              // Animated percentage counter
+              AnimatedBuilder(
+                animation: _progressAnimation,
+                builder: (context, child) {
+                  final animatedPercent = (_getProgressPercent() * _progressAnimation.value).round();
+                  return Text(
+                    '$animatedPercent%',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: Colors.white,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Animated progress bar
+          AnimatedBuilder(
+            animation: _progressAnimation,
+            builder: (context, child) {
+              final animatedProgress = currentProgress * _progressAnimation.value;
+              return Stack(
+                children: [
+                  // Unfilled bar (background)
+                  Container(
+                    height: 6,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                  // Filled bar (foreground) - gradient golden
+                  FractionallySizedBox(
+                    widthFactor: animatedProgress.clamp(0.0, 1.0),
+                    child: Container(
+                      height: 6,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Color(0xFFFFD700),
+                            Color(0xFFffc542),
+                            Color(0xFFFFE066),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0xFFffc542).withOpacity(0.4),
+                            blurRadius: 4,
+                            offset: Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Screen Time Card widget
+class _ScreenTimeCard extends StatefulWidget {
+  const _ScreenTimeCard();
+
+  @override
+  State<_ScreenTimeCard> createState() => _ScreenTimeCardState();
+}
+
+class _ScreenTimeCardState extends State<_ScreenTimeCard> 
+    with SingleTickerProviderStateMixin {
+  late AutomaticScreenTracker _tracker;
+  late AnimationController _animationController;
+  late Animation<double> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    // Slide from left animation - same as Graph
+    _slideAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    );
+    
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _animationController.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const accentColor = Color(0xFFa92d35);
+    
+    return AnimatedBuilder(
+      animation: _slideAnimation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(-100 * (1 - _slideAnimation.value), 0), // Slide from left
+          child: Opacity(
+            opacity: _slideAnimation.value.clamp(0.0, 1.0),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white,
+                    Color(0xFFFFF5F5), // Very light pink tint
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFFfffff), // Gold border
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 15,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Screen Time',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[600],
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Animated screen time
+                  Center(
+                    child: AnimatedBuilder(
+                      animation: _slideAnimation,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: 0.5 + (_slideAnimation.value * 0.5),
+                          child: Opacity(
+                            opacity: _slideAnimation.value,
+                            child: Text(
+                              _tracker.todayScreenTime,
+                              style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 36,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Today label
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: accentColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        'Today',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: accentColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Pickup Card widget showing daily phone pickups
+class _PickupCard extends StatefulWidget {
+  const _PickupCard();
+
+  @override
+  State<_PickupCard> createState() => _PickupCardState();
+}
+
+class _PickupCardState extends State<_PickupCard> 
+    with SingleTickerProviderStateMixin {
+  late AutomaticScreenTracker _tracker;
+  late AnimationController _animationController;
+  late Animation<double> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _tracker = AutomaticScreenTracker();
+    _tracker.addListener(_onUpdate);
+    
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    // Slide from left animation - same as Graph (staggered after Screen Time card)
+    _slideAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    );
+    
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) _animationController.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _tracker.removeListener(_onUpdate);
+    super.dispose();
+  }
+
+  void _onUpdate() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const accentColor = Color(0xFFa92d35);
+    
+    return AnimatedBuilder(
+      animation: _slideAnimation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(-100 * (1 - _slideAnimation.value), 0), // Slide from left
+          child: Opacity(
+            opacity: _slideAnimation.value.clamp(0.0, 1.0),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFFc13d45), // Lighter accent
+                    Color(0xFFa92d35), // Main accent
+                    Color(0xFF8a2329), // Darker accent
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: const Color(0xFFa92d35), // Gold border
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: accentColor.withOpacity(0.3),
+                    blurRadius: 15,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Pickups',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.white70, // White text for accent background
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Animated pickup count
+                  Center(
+                    child: AnimatedBuilder(
+                      animation: _slideAnimation,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: 0.5 + (_slideAnimation.value * 0.5),
+                          child: Opacity(
+                            opacity: _slideAnimation.value,
+                            child: Text(
+                              '${_tracker.todayPickupCount}',
+                              style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 36,
+                                height: 1,
+                                color: Colors.white, // White text
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Today label
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2), // Semi-transparent white
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        'Today',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.white, // White text
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
 
 /// Usage graph widget showing screen time over hours
 class _UsageGraphWidget extends StatefulWidget {
-  const _UsageGraphWidget();
+  const _UsageGraphWidget({super.key});
 
   @override
   State<_UsageGraphWidget> createState() => _UsageGraphWidgetState();
 }
 
-class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
+class _UsageGraphWidgetState extends State<_UsageGraphWidget> 
+    with TickerProviderStateMixin {
   late AutomaticScreenTracker _tracker;
-  List<double> _weeklyData = List.filled(7, 0.0); // 7 days of data
-  int? _selectedDay;
-  Offset? _touchPosition;
+  late AnimationController _slideController;
+  late AnimationController _lineController;
+  late Animation<double> _slideAnimation;
+  late Animation<double> _lineAnimation;
+  List<double> _weeklyData = List.filled(7, 0.0); // Current week data
+  List<double> _lastWeekData = List.filled(7, 0.0); // Last week data
   
   static const List<String> _dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   
@@ -1424,11 +2255,39 @@ class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
     super.initState();
     _tracker = AutomaticScreenTracker();
     _tracker.addListener(_onUpdate);
+    
+    // Setup slide animation for card
+    _slideController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _slideAnimation = CurvedAnimation(
+      parent: _slideController,
+      curve: Curves.easeOutCubic,
+    );
+    
+    // Setup line animation (starts after slide completes)
+    _lineController = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    );
+    _lineAnimation = CurvedAnimation(
+      parent: _lineController,
+      curve: Curves.easeOutCubic,
+    );
+    
+    // Start slide animation after delay
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) _slideController.forward();
+    });
+    
     _loadWeeklyData();
   }
 
   @override
   void dispose() {
+    _slideController.dispose();
+    _lineController.dispose();
     _tracker.removeListener(_onUpdate);
     super.dispose();
   }
@@ -1439,13 +2298,27 @@ class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
       setState(() {});
     }
   }
+
+  /// Public method to refresh graph data
+  Future<void> refresh() async {
+    await _loadWeeklyData();
+  }
   
   Future<void> _loadWeeklyData() async {
     try {
       final weeklyUsage = await _tracker.getWeeklyUsage();
+      final lastWeekUsage = await _tracker.getLastWeekUsage();
       if (mounted) {
         setState(() {
           _weeklyData = weeklyUsage;
+          _lastWeekData = lastWeekUsage;
+        });
+        // Start line animation after slide completes
+        Future.delayed(const Duration(milliseconds: 400), () {
+          if (mounted) {
+            _lineController.reset();
+            _lineController.forward();
+          }
         });
       }
     } catch (e) {
@@ -1470,114 +2343,139 @@ class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
   Widget build(BuildContext context) {
     const accentColor = Color(0xFFa92d35);
     
-    // Get max usage for scaling
-    final maxUsage = _weeklyData.reduce((a, b) => a > b ? a : b);
-    final normalizedData = maxUsage > 0 
-        ? _weeklyData.map((v) => v / maxUsage).toList()
-        : List.filled(7, 0.0);
-    
     final todayIndex = _getTodayIndex();
     
-    return Container(
-      height: 200,
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white, width: 3),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 15,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(17),
-        child: GestureDetector(
-          onTapDown: (details) {
-            final RenderBox box = context.findRenderObject() as RenderBox;
-            final localPosition = details.localPosition;
-            final day = ((localPosition.dx / box.size.width) * 7).floor().clamp(0, 6);
-            setState(() {
-              _selectedDay = day;
-              _touchPosition = localPosition;
-            });
-          },
-          onPanUpdate: (details) {
-            final RenderBox box = context.findRenderObject() as RenderBox;
-            final localPosition = details.localPosition;
-            final day = ((localPosition.dx / box.size.width) * 7).floor().clamp(0, 6);
-            setState(() {
-              _selectedDay = day;
-              _touchPosition = localPosition;
-            });
-          },
-          onTapUp: (_) {
-            Future.delayed(const Duration(seconds: 2), () {
-              if (mounted) setState(() => _selectedDay = null);
-            });
-          },
-          onPanEnd: (_) {
-            Future.delayed(const Duration(seconds: 2), () {
-              if (mounted) setState(() => _selectedDay = null);
-            });
-          },
-          child: Stack(
-            children: [
-              // Graph
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _UsageGraphPainter(
-                    context: context,
-                    accentColor: accentColor,
-                    weeklyData: normalizedData,
-                    selectedDay: _selectedDay,
-                    todayIndex: todayIndex,
+    // Use live screen time for today (includes current session), database values for other days
+    final liveWeeklyData = List<double>.from(_weeklyData);
+    liveWeeklyData[todayIndex] = _tracker.todayScreenTimeMinutes.toDouble();
+    
+    // Get max usage for scaling
+    final maxUsage = liveWeeklyData.reduce((a, b) => a > b ? a : b);
+    final normalizedData = maxUsage > 0 
+        ? liveWeeklyData.map((v) => v / maxUsage).toList()
+        : List.filled(7, 0.0);
+    
+    // Normalize last week data using same max for fair comparison
+    final combinedMax = [maxUsage, _lastWeekData.reduce((a, b) => a > b ? a : b)].reduce((a, b) => a > b ? a : b);
+    final normalizedLastWeek = combinedMax > 0 
+        ? _lastWeekData.map((v) => v / combinedMax).toList()
+        : List.filled(7, 0.0);
+    final normalizedCurrentWeek = combinedMax > 0 
+        ? liveWeeklyData.map((v) => v / combinedMax).toList()
+        : List.filled(7, 0.0);
+    
+    return AnimatedBuilder(
+      animation: _slideAnimation,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(-100 * (1 - _slideAnimation.value), 0), // Slide from left
+          child: Opacity(
+            opacity: _slideAnimation.value.clamp(0.0, 1.0),
+            child: Container(
+              height: 200,
+              decoration: BoxDecoration(
+                color: const Color(0xFF232525), // Dark charcoal
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 15,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(
+                  children: [
+                    // Animated Graph
+                    Positioned.fill(
+                      child: AnimatedBuilder(
+                        animation: _lineAnimation,
+                        builder: (context, child) {
+                          return CustomPaint(
+                    painter: _UsageGraphPainter(
+                      context: context,
+                      accentColor: accentColor,
+                      weeklyData: normalizedCurrentWeek,
+                      lastWeekData: normalizedLastWeek,
+                      todayIndex: todayIndex,
+                      animationProgress: _lineAnimation.value,
+                    ),
+                  );
+                },
+              ),
+            ),
+              // Current week info box (always visible) - top left
+              Positioned(
+                left: 12,
+                top: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: accentColor.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: accentColor.withOpacity(0.5)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _dayLabels[todayIndex],
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        _formatDuration(_tracker.todayScreenTimeMinutes),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              // Tooltip
-              if (_selectedDay != null && _touchPosition != null)
-                Positioned(
-                  left: _touchPosition!.dx.clamp(40, MediaQuery.of(context).size.width - 120),
-                  top: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: accentColor,
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
+              // Last week info box (always visible) - top right
+              Positioned(
+                right: 12,
+                top: 10,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Last ${_dayLabels[todayIndex]}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.7),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _dayLabels[_selectedDay!],
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
+                      ),
+                      Text(
+                        _formatDuration(_lastWeekData[todayIndex].toInt()),
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
                         ),
-                        Text(
-                          _formatDuration(_weeklyData[_selectedDay!].toInt()),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
+              ),
               // Day labels at bottom
               Positioned(
                 left: 16,
@@ -1593,17 +2491,20 @@ class _UsageGraphWidgetState extends State<_UsageGraphWidget> {
                         fontSize: 12,
                         fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
                         color: isToday 
-                            ? accentColor 
-                            : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                            ? const Color(0xFFffc542) // Golden for today
+                            : Colors.white.withOpacity(0.6),
                       ),
                     );
                   }).toList(),
                 ),
               ),
-            ],
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -1612,47 +2513,116 @@ class _UsageGraphPainter extends CustomPainter {
   final BuildContext context;
   final Color accentColor;
   final List<double> weeklyData;
-  final int? selectedDay;
+  final List<double> lastWeekData;
   final int todayIndex;
+  final double animationProgress;
 
   _UsageGraphPainter({
     required this.context, 
     required this.accentColor,
     required this.weeklyData,
-    this.selectedDay,
+    required this.lastWeekData,
     required this.todayIndex,
+    required this.animationProgress,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Leave space at bottom for labels
+    // Leave space at bottom for labels and padding on sides to align with day labels
     final graphHeight = size.height - 35;
     final topPadding = 20.0;
+    final horizontalPadding = 25.0; // Match day labels padding
+    final graphWidth = size.width - (horizontalPadding * 2);
     
-    // Gradient fill paint
-    final fillPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          accentColor.withOpacity(0.4),
-          accentColor.withOpacity(0.1),
-        ],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, graphHeight));
+    // Draw grid lines - lighter for dark background
+    final gridPaint = Paint()
+      ..color = Colors.white.withOpacity(0.1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
 
+    // Horizontal grid lines (4 lines)
+    for (var i = 0; i < 4; i++) {
+      final y = topPadding + (graphHeight - topPadding) * (i / 3);
+      canvas.drawLine(
+        Offset(horizontalPadding, y),
+        Offset(size.width - horizontalPadding, y),
+        gridPaint,
+      );
+    }
+
+    // Vertical grid lines (7 lines for each day)
+    for (var i = 0; i < 7; i++) {
+      final x = horizontalPadding + (i / 6) * graphWidth;
+      canvas.drawLine(
+        Offset(x, topPadding),
+        Offset(x, graphHeight),
+        gridPaint,
+      );
+    }
+    
+    // Define golden color for lines
+    const goldenColor = Color(0xFFffc542);
+
+    // Last week line paint - pale white
+    final lastWeekLinePaint = Paint()
+      ..color = Colors.white.withOpacity(0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Current week line - golden
     final linePaint = Paint()
-      ..color = accentColor
+      ..color = goldenColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
-    // Use weekly data (7 points for each day)
-    // Invert values so higher usage = higher on graph (closer to top)
+    // Draw last week line first (behind current week)
+    final lastWeekPoints = <Offset>[];
+    for (var i = 0; i < lastWeekData.length; i++) {
+      final x = horizontalPadding + (i / (lastWeekData.length - 1)) * graphWidth;
+      final normalizedValue = lastWeekData[i].clamp(0.0, 1.0);
+      final y = topPadding + (graphHeight - topPadding) * (1.0 - normalizedValue);
+      lastWeekPoints.add(Offset(x, y));
+    }
+
+    if (lastWeekPoints.isNotEmpty) {
+      final lastWeekPath = Path();
+      lastWeekPath.moveTo(lastWeekPoints.first.dx, lastWeekPoints.first.dy);
+      
+      for (var i = 0; i < lastWeekPoints.length - 1; i++) {
+        final current = lastWeekPoints[i];
+        final next = lastWeekPoints[i + 1];
+        final controlPoint1 = Offset(
+          current.dx + (next.dx - current.dx) / 3,
+          current.dy,
+        );
+        final controlPoint2 = Offset(
+          current.dx + 2 * (next.dx - current.dx) / 3,
+          next.dy,
+        );
+        lastWeekPath.cubicTo(
+          controlPoint1.dx, controlPoint1.dy,
+          controlPoint2.dx, controlPoint2.dy,
+          next.dx, next.dy,
+        );
+      }
+      
+      // Animate last week line drawing
+      final lastWeekMetrics = lastWeekPath.computeMetrics().first;
+      final animatedLastWeekPath = lastWeekMetrics.extractPath(
+        0, 
+        lastWeekMetrics.length * animationProgress,
+      );
+      canvas.drawPath(animatedLastWeekPath, lastWeekLinePaint);
+    }
+
+    // Current week points
     final points = <Offset>[];
     for (var i = 0; i < weeklyData.length; i++) {
-      final x = (i / (weeklyData.length - 1)) * size.width;
-      // Invert: high value = low y (top of graph)
+      final x = horizontalPadding + (i / (weeklyData.length - 1)) * graphWidth;
       final normalizedValue = weeklyData[i].clamp(0.0, 1.0);
       final y = topPadding + (graphHeight - topPadding) * (1.0 - normalizedValue);
       points.add(Offset(x, y));
@@ -1660,7 +2630,7 @@ class _UsageGraphPainter extends CustomPainter {
 
     if (points.isEmpty) return;
 
-    // Create smooth curve using cubic bezier for smoother transitions
+    // Create smooth curve for current week
     final linePath = Path();
     linePath.moveTo(points.first.dx, points.first.dy);
     
@@ -1682,50 +2652,64 @@ class _UsageGraphPainter extends CustomPainter {
       );
     }
 
-    // Create filled area path
-    final fillPath = Path.from(linePath);
-    fillPath.lineTo(size.width, graphHeight);
-    fillPath.lineTo(0, graphHeight);
-    fillPath.close();
+    // Animate current week line drawing
+    final lineMetrics = linePath.computeMetrics().first;
+    final animatedLinePath = lineMetrics.extractPath(
+      0, 
+      lineMetrics.length * animationProgress,
+    );
     
-    canvas.drawPath(fillPath, fillPaint);
-    canvas.drawPath(linePath, linePaint);
+    // Get the current end point of animated line for fill
+    final currentEndX = horizontalPadding + (animationProgress * graphWidth);
+    
+    // Create animated filled area path
+    final fillPaint2 = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          goldenColor.withOpacity(0.4 * animationProgress),
+          goldenColor.withOpacity(0.1 * animationProgress),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, graphHeight));
+    
+    final fillPath = Path.from(animatedLinePath);
+    final lastPoint = lineMetrics.getTangentForOffset(lineMetrics.length * animationProgress)?.position;
+    if (lastPoint != null) {
+      fillPath.lineTo(lastPoint.dx, graphHeight);
+      fillPath.lineTo(points.first.dx, graphHeight);
+      fillPath.close();
+      canvas.drawPath(fillPath, fillPaint2);
+    }
+    
+    canvas.drawPath(animatedLinePath, linePaint);
 
-    // Draw selection indicator line and dot
-    if (selectedDay != null && selectedDay! < points.length) {
-      final selectedPoint = points[selectedDay!];
+    // Always draw today's vertical indicator line (fade in with animation)
+    if (todayIndex < points.length && animationProgress > 0.8) {
+      final todayPoint = points[todayIndex];
+      final lineOpacity = ((animationProgress - 0.8) / 0.2).clamp(0.0, 1.0);
       
-      // Vertical indicator line
-      final linePaintIndicator = Paint()
-        ..color = accentColor.withOpacity(0.5)
+      // Vertical indicator line - golden (always visible)
+      final todayLinePaint = Paint()
+        ..color = goldenColor.withOpacity(0.6 * lineOpacity)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
+        ..strokeWidth = 1.5;
       canvas.drawLine(
-        Offset(selectedPoint.dx, topPadding),
-        Offset(selectedPoint.dx, graphHeight),
-        linePaintIndicator,
+        Offset(todayPoint.dx, topPadding),
+        Offset(todayPoint.dx, graphHeight),
+        todayLinePaint,
       );
-      
-      // Selected point dot
-      final dotOuterPaint = Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.fill;
-      final dotPaint = Paint()
-        ..color = accentColor
-        ..style = PaintingStyle.fill;
-      
-      canvas.drawCircle(selectedPoint, 10, dotOuterPaint);
-      canvas.drawCircle(selectedPoint, 6, dotPaint);
     }
 
-    // Draw today indicator dot
-    if (todayIndex < points.length && selectedDay == null) {
+    // Draw today indicator dot - golden (fade in at end of animation)
+    if (todayIndex < points.length && animationProgress > 0.9) {
       final todayPoint = points[todayIndex];
-      final dotPaint = Paint()
-        ..color = accentColor
-        ..style = PaintingStyle.fill;
+      final dotOpacity = ((animationProgress - 0.9) / 0.1).clamp(0.0, 1.0);
       final dotOuterPaint = Paint()
-        ..color = Colors.white
+        ..color = Colors.white.withOpacity(dotOpacity)
+        ..style = PaintingStyle.fill;
+      final dotPaint = Paint()
+        ..color = goldenColor.withOpacity(dotOpacity)
         ..style = PaintingStyle.fill;
       
       canvas.drawCircle(todayPoint, 8, dotOuterPaint);
@@ -1736,8 +2720,9 @@ class _UsageGraphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _UsageGraphPainter oldDelegate) {
     return oldDelegate.weeklyData != weeklyData || 
-           oldDelegate.selectedDay != selectedDay ||
-           oldDelegate.todayIndex != todayIndex;
+           oldDelegate.lastWeekData != lastWeekData ||
+           oldDelegate.todayIndex != todayIndex ||
+           oldDelegate.animationProgress != animationProgress;
   }
 }
 
@@ -2117,7 +3102,8 @@ class _StatsRowWidgetState extends State<_StatsRowWidget> {
 
 class RankingsTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
-  const RankingsTab({super.key, required this.onSelectTab});
+  final GlobalKey<ScaffoldState>? scaffoldKey;
+  const RankingsTab({super.key, required this.onSelectTab, this.scaffoldKey});
 
   @override
   State<RankingsTab> createState() => _RankingsTabState();
@@ -2328,17 +3314,16 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
-        drawer: _AppDrawer(
-          onSelectTab: widget.onSelectTab,
-          currentScreenIndex: 1, // Rankings tab
-        ),
-      drawerEdgeDragWidthOverride: MediaQuery.of(context).size.width * 0.2,
-      drawerGestureEnabled: true,
+      drawerGestureEnabled: false,
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () => widget.scaffoldKey?.currentState?.openDrawer(),
+        ),
         title: const Text('Rankings'),
       ),
       body: Column(
-            children: [
+        children: [
           // Centered, swipable tabs: EVSU | Department | Friends
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -2400,19 +3385,19 @@ class _RankingsTabState extends State<RankingsTab> with SingleTickerProviderStat
             ),
           ),
           const SizedBox(height: 1),
-            Expanded(
-              child: TabBarView(
+          Expanded(
+            child: TabBarView(
               controller: _tabController,
               physics: const BouncingScrollPhysics(),
-                children: [
+              children: [
                 _buildRankingList(),
                 _buildRankingList(),
                 _buildRankingList(),
-                ],
-              ),
+              ],
             ),
-            ],
           ),
+        ],
+      ),
     );
   }
 
@@ -3188,30 +4173,76 @@ class _RankingTile extends StatelessWidget {
   }
 }
 
-class FriendsTab extends StatelessWidget {
+class FriendsTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
-  const FriendsTab({super.key, required this.onSelectTab});
+  final GlobalKey<ScaffoldState>? scaffoldKey;
+  const FriendsTab({super.key, required this.onSelectTab, this.scaffoldKey});
+
+  @override
+  State<FriendsTab> createState() => _FriendsTabState();
+}
+
+class _FriendsTabState extends State<FriendsTab> {
+  bool _isStatusBarHidden = false;
+
+  void _handleScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return;
+    if (notification is ScrollUpdateNotification) {
+      final currentOffset = notification.metrics.pixels;
+      if (currentOffset >= kToolbarHeight && !_isStatusBarHidden) {
+        _isStatusBarHidden = true;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else if (currentOffset < 1 && _isStatusBarHidden) {
+        _isStatusBarHidden = false;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_isStatusBarHidden) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
-      drawer: _AppDrawer(
-        onSelectTab: onSelectTab,
-        currentScreenIndex: 100, // Friends tab
-      ),
-      appBar: AppBar(
-        title: const Text('Friends'),
-      ),
-      body: ListView(
-        physics: const ClampingScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        children: [
-          _FriendsSearchCard(),
-          const SizedBox(height: 16),
-          _FriendsListCard(),
-          const SizedBox(height: 16),
-          _FriendRequestsCard(),
-        ],
+      drawerGestureEnabled: false,
+      extendBodyBehindAppBar: true,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          _handleScroll(notification);
+          return false;
+        },
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverAppBar(
+              elevation: 0,
+              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+              floating: true,
+              snap: true,
+              leading: IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => widget.scaffoldKey?.currentState?.openDrawer(),
+              ),
+              title: const Text('Friends'),
+            ),
+          ],
+          body: ListView(
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              _FriendsSearchCard(),
+              const SizedBox(height: 16),
+              _FriendsListCard(),
+              const SizedBox(height: 16),
+              _FriendRequestsCard(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3612,7 +4643,8 @@ class _FriendRequestsCardState extends State<_FriendRequestsCard> {
 
 class ChallengesTab extends StatefulWidget {
   final ValueChanged<int> onSelectTab;
-  const ChallengesTab({super.key, required this.onSelectTab});
+  final GlobalKey<ScaffoldState>? scaffoldKey;
+  const ChallengesTab({super.key, required this.onSelectTab, this.scaffoldKey});
 
   @override
   State<ChallengesTab> createState() => _ChallengesTabState();
@@ -3620,6 +4652,7 @@ class ChallengesTab extends StatefulWidget {
 
 class _ChallengesTabState extends State<ChallengesTab> {
   bool _isLoading = true;
+  bool _isStatusBarHidden = false;
   final ChallengeService _challengeService = ChallengeService();
   List<badge_models.Badge> _allBadges = [];
   List<challenge_models.Challenge> _challenges = [];
@@ -3645,6 +4678,28 @@ class _ChallengesTabState extends State<ChallengesTab> {
   void initState() {
     super.initState();
     _loadChallengesData();
+  }
+
+  @override
+  void dispose() {
+    if (_isStatusBarHidden) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+    super.dispose();
+  }
+
+  void _handleScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return;
+    if (notification is ScrollUpdateNotification) {
+      final currentOffset = notification.metrics.pixels;
+      if (currentOffset >= kToolbarHeight && !_isStatusBarHidden) {
+        _isStatusBarHidden = true;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else if (currentOffset < 1 && _isStatusBarHidden) {
+        _isStatusBarHidden = false;
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
+    }
   }
 
   Future<void> _loadChallengesData() async {
@@ -3875,47 +4930,77 @@ class _ChallengesTabState extends State<ChallengesTab> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return AppScaffold(
-        drawer: _AppDrawer(
-          onSelectTab: widget.onSelectTab,
-          currentScreenIndex: 2,
-        ),
-        appBar: AppBar(
-          title: const Text('Challenges'),
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(),
+        drawerGestureEnabled: false,
+        extendBodyBehindAppBar: true,
+        body: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            _handleScroll(notification);
+            return false;
+          },
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              SliverAppBar(
+                elevation: 0,
+                backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+                floating: true,
+                snap: true,
+                leading: IconButton(
+                  icon: const Icon(Icons.menu),
+                  onPressed: () => widget.scaffoldKey?.currentState?.openDrawer(),
+                ),
+                title: const Text('Challenges'),
+              ),
+            ],
+            body: const Center(
+              child: CircularProgressIndicator(),
+            ),
+          ),
         ),
       );
     }
     return AppScaffold(
-      drawer: _AppDrawer(
-        onSelectTab: widget.onSelectTab,
-        currentScreenIndex: 2, // Challenges tab
-      ),
-      appBar: AppBar(
-        title: const Text('Challenges'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.collections),
-            tooltip: 'View Badge Catalog',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => BadgeCatalogScreen(
-                    onSelectTab: widget.onSelectTab,
-                  ),
+      drawerGestureEnabled: false,
+      extendBodyBehindAppBar: true,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          _handleScroll(notification);
+          return false;
+        },
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) => [
+            SliverAppBar(
+              elevation: 0,
+              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+              floating: true,
+              snap: true,
+              leading: IconButton(
+                icon: const Icon(Icons.menu),
+                onPressed: () => widget.scaffoldKey?.currentState?.openDrawer(),
+              ),
+              title: const Text('Challenges'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.collections),
+                  tooltip: 'View Badge Catalog',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => BadgeCatalogScreen(
+                          onSelectTab: widget.onSelectTab,
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _loadChallengesData,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
+              ],
+            ),
+          ],
+          body: RefreshIndicator(
+            onRefresh: _loadChallengesData,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Daily Challenges Section
@@ -4024,6 +5109,8 @@ class _ChallengesTabState extends State<ChallengesTab> {
               ],
             ],
           ),
+        ),
+      ),
         ),
       ),
     );
@@ -5057,6 +6144,7 @@ class _AppDrawerState extends State<_AppDrawer> {
     return Drawer(
       width: drawerWidth,
       child: SafeArea(
+        bottom: false, // Allow drawer to extend over bottom navbar
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

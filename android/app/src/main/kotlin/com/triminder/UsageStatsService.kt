@@ -247,8 +247,9 @@ class UsageStatsService(private val context: Context) {
         // Query usage events instead of aggregated stats for accurate results
         val events = queryUsageEvents(startTime, endTime)
         
-        // Track foreground start time for each app
-        val foregroundStartTimes = mutableMapOf<String, Long>()
+        // Track which app is currently in foreground and when it started
+        var currentForegroundApp: String? = null
+        var currentForegroundStart: Long = 0L
         // Track total usage time for each app (in milliseconds)
         val appUsageTimes = mutableMapOf<String, Long>()
         
@@ -262,36 +263,41 @@ class UsageStatsService(private val context: Context) {
             
             when (eventType) {
                 UsageEvents.Event.MOVE_TO_FOREGROUND -> {
-                    // App moved to foreground - record start time
-                    foregroundStartTimes[packageName] = timestamp
-                }
-                UsageEvents.Event.MOVE_TO_BACKGROUND -> {
-                    // App moved to background - calculate duration and add to total
-                    val foregroundStart = foregroundStartTimes.remove(packageName)
-                    if (foregroundStart != null) {
-                        // Calculate duration (clamp to date range boundaries)
-                        // If app started before our date range, only count from startTime
-                        val actualStart = maxOf(foregroundStart, startTime)
-                        // If app ended after our date range, only count until endTime
+                    // Before recording new foreground app, close out the previous one
+                    // Only ONE app can be in foreground at a time
+                    if (currentForegroundApp != null && currentForegroundApp != packageName) {
+                        val actualStart = maxOf(currentForegroundStart, startTime)
                         val actualEnd = minOf(timestamp, endTime)
                         val duration = maxOf(0, actualEnd - actualStart)
-                        
+                        appUsageTimes[currentForegroundApp!!] = appUsageTimes.getOrDefault(currentForegroundApp!!, 0L) + duration
+                    }
+                    // Record new foreground app
+                    currentForegroundApp = packageName
+                    currentForegroundStart = timestamp
+                }
+                UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                    // App moved to background - calculate duration if it's the current foreground app
+                    if (currentForegroundApp == packageName) {
+                        val actualStart = maxOf(currentForegroundStart, startTime)
+                        val actualEnd = minOf(timestamp, endTime)
+                        val duration = maxOf(0, actualEnd - actualStart)
                         appUsageTimes[packageName] = appUsageTimes.getOrDefault(packageName, 0L) + duration
+                        currentForegroundApp = null
                     }
                 }
             }
         }
         
-        // Handle apps still in foreground at end of day
-        for ((packageName, foregroundStart) in foregroundStartTimes) {
-            // Clamp to date range boundaries
-            val actualStart = maxOf(foregroundStart, startTime)
+        // Handle app still in foreground (only if it's TRIminder - our own app is filtered out)
+        // For other apps, their time should have been closed when TRIminder came to foreground
+        if (currentForegroundApp != null) {
+            val actualStart = maxOf(currentForegroundStart, startTime)
             // Use current time or endTime, whichever is earlier
             val currentTime = System.currentTimeMillis()
             val actualEnd = minOf(currentTime, endTime)
             val duration = maxOf(0, actualEnd - actualStart)
             
-            appUsageTimes[packageName] = appUsageTimes.getOrDefault(packageName, 0L) + duration
+            appUsageTimes[currentForegroundApp!!] = appUsageTimes.getOrDefault(currentForegroundApp!!, 0L) + duration
         }
         
         // Convert milliseconds to minutes and return
@@ -1054,6 +1060,69 @@ class UsageStatsService(private val context: Context) {
                 Log.w("UsageStatsService", "✅ YouTube: Exception ($e) - NOT filtering (allowing)")
             }
             false
+        }
+    }
+    
+    /**
+     * Get today's device unlock count using UsageEvents
+     * Uses multiple event types to ensure compatibility across devices
+     */
+    fun getTodayUnlockCount(): Int {
+        try {
+            val usm = usageStatsManager ?: run {
+                Log.w("UsageStatsService", "UsageStatsManager is null")
+                return 0
+            }
+            
+            // Get start of today
+            val calendar = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val startTime = calendar.timeInMillis
+            val endTime = System.currentTimeMillis()
+            
+            val events = usm.queryEvents(startTime, endTime)
+            if (events == null) {
+                Log.w("UsageStatsService", "queryEvents returned null")
+                return 0
+            }
+            
+            val event = UsageEvents.Event()
+            var keyguardHiddenCount = 0
+            var screenInteractiveCount = 0
+            var deviceUnlockCount = 0
+            
+            // Event types:
+            // 17 = SCREEN_NON_INTERACTIVE (screen off)
+            // 18 = KEYGUARD_HIDDEN (device unlocked)
+            // 15 = SCREEN_INTERACTIVE (screen on)
+            // 28 = DEVICE_STARTUP (added in API 29)
+            
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                when (event.eventType) {
+                    18 -> keyguardHiddenCount++  // KEYGUARD_HIDDEN - most reliable
+                    15 -> screenInteractiveCount++  // SCREEN_INTERACTIVE - fallback
+                    28 -> deviceUnlockCount++  // DEVICE_STARTUP (API 29+)
+                }
+            }
+            
+            Log.d("UsageStatsService", "Unlock counts - KEYGUARD_HIDDEN: $keyguardHiddenCount, SCREEN_INTERACTIVE: $screenInteractiveCount, DEVICE_STARTUP: $deviceUnlockCount")
+            
+            // Prefer KEYGUARD_HIDDEN, fall back to SCREEN_INTERACTIVE
+            val count = when {
+                keyguardHiddenCount > 0 -> keyguardHiddenCount
+                screenInteractiveCount > 0 -> screenInteractiveCount
+                else -> deviceUnlockCount
+            }
+            
+            return count
+        } catch (e: Exception) {
+            Log.e("UsageStatsService", "Error getting unlock count: ${e.message}")
+            return 0
         }
     }
 }

@@ -125,6 +125,15 @@ class UsageStatsPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 }
             }
             
+            "getTodayUnlockCount" -> {
+                try {
+                    val count = usageStatsService.getTodayUnlockCount()
+                    result.success(count)
+                } catch (e: Exception) {
+                    result.error("GET_UNLOCK_COUNT_ERROR", e.message, null)
+                }
+            }
+            
             else -> result.notImplemented()
         }
     }

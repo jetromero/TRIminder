@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 import '../services/database_service.dart';
+import '../services/usage_stats_service.dart';
 import '../models/user_models.dart';
 import '../models/badge_models.dart';
 import '../services/persistent_tracker_service.dart';
@@ -27,6 +28,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   int _todayScreenTimeMinutes = 0;
   int _todayScreenTimeFromDatabase = 0; // Base total from database (without current session)
   int _currentSessionMinutes = 0;
+  int _todayPickupCount = 0; // Number of phone pickups today
   
   // XP and wellness data
   int _todayPotentialXP = 0; // XP that will be awarded at end of day
@@ -44,6 +46,7 @@ class AutomaticScreenTracker extends ChangeNotifier {
   String get todayScreenTime => _formatDuration(_todayScreenTimeMinutes);
   String get currentSession => _formatDuration(_currentSessionMinutes);
   bool get isUserActive => _isUserActive;
+  int get todayPickupCount => _todayPickupCount;
   
   /// Start automatic screen monitoring (data display only - actual tracking handled by PersistentTrackerService)
   Future<bool> startMonitoring() async {
@@ -541,6 +544,21 @@ class AutomaticScreenTracker extends ChangeNotifier {
           .where((log) => log.durationMinutes != null)
           .fold(0, (sum, log) => sum + log.durationMinutes!);
 
+      // Get actual device unlock count from UsageStatsManager
+      _todayPickupCount = await UsageStatsService.getTodayUnlockCount();
+      SimplifiedLogger.verbose('Native unlock count: $_todayPickupCount');
+      
+      // Fallback to session count if native method fails
+      if (_todayPickupCount == 0 && todayLogs.isNotEmpty) {
+        _todayPickupCount = todayLogs.length;
+        SimplifiedLogger.verbose('Using fallback session count: $_todayPickupCount');
+      }
+      
+      // Ensure at least 1 if there's any screen time today
+      if (_todayPickupCount == 0 && _todayScreenTimeFromDatabase > 0) {
+        _todayPickupCount = 1;
+      }
+
       // Update real-time total (database + current session)
       _updateRealTimeTodayTotal();
 
@@ -757,6 +775,48 @@ Future<void> _syncCurrentSessionFromBackground() async {
       return dailyMinutes;
     } catch (e) {
       SimplifiedLogger.error('Error getting weekly usage: $e');
+      return List.filled(7, 0.0);
+    }
+  }
+
+  /// Get last week's usage data (7 values, one for each day Sun-Sat)
+  /// Returns list of total minutes for each day of the previous week
+  Future<List<double>> getLastWeekUsage() async {
+    try {
+      final userId = SupabaseService().currentUserId;
+      if (userId == null) {
+        return List.filled(7, 0.0);
+      }
+
+      final now = DateTime.now();
+      // Get the start of last week (Sunday of previous week)
+      final daysSinceSunday = now.weekday % 7;
+      final startOfThisWeek = DateTime(now.year, now.month, now.day).subtract(Duration(days: daysSinceSunday));
+      final startOfLastWeek = startOfThisWeek.subtract(const Duration(days: 7));
+      final endOfLastWeek = startOfThisWeek;
+
+      final db = DatabaseService();
+      final weekLogs = await db.getScreenTimeEntriesForDateRange(
+        userId, 
+        startOfLastWeek, 
+        endOfLastWeek
+      );
+
+      // Initialize daily buckets (7 days: Sun=0, Mon=1, ..., Sat=6)
+      final dailyMinutes = List<double>.filled(7, 0.0);
+
+      // Distribute screen time entries to their respective days
+      for (final log in weekLogs) {
+        final duration = log.durationMinutes ?? 0;
+        if (duration <= 0) continue;
+        
+        final dayIndex = log.startTime.weekday % 7; // Sunday = 0
+        dailyMinutes[dayIndex] += duration.toDouble();
+      }
+
+      return dailyMinutes;
+    } catch (e) {
+      SimplifiedLogger.error('Error getting last week usage: $e');
       return List.filled(7, 0.0);
     }
   }
