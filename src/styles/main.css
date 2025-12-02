@@ -1,0 +1,66 @@
+/* Main Stylesheet - TriMinder Admin Dashboard */
+
+/* Import all stylesheets in order */
+@import './reset.css';
+@import './variables.css';
+@import './common.css';
+@import './layout.css';
+@import './sidebar.css';
+@import './topbar.css';
+@import './components.css';
+@import './filters.css';
+@import './pages.css';
+@import './student-detail.css';
+@import './dashboard.css';
+@import './students.css';
+@import './admins.css';
+@import './departments.css';
+@import './modal.css';
+
+/* Global Styles */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Utility Classes */
+.text-center {
+  text-align: center;
+}
+
+.font-semibold {
+  font-weight: 600;
+}
+
+.font-bold {
+  font-weight: 700;
+}
+
+.uppercase {
+  text-transform: uppercase;
+}
+
+.capitalize {
+  text-transform: capitalize;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
